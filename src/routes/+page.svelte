@@ -1,0 +1,1587 @@
+<script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
+	import {
+		RhythmEngine,
+		type RhythmEngineConfig,
+		type RhythmStage,
+		type RhythmTick
+	} from '$lib/rhythm/engine';
+	import { HarmonyEngine, type TriadType } from '$lib/harmony/engine';
+	import { Badge } from '$lib/components/ui/badge/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Card from '$lib/components/ui/card/index.js';
+	import { Separator } from '$lib/components/ui/separator/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
+	import * as Sheet from '$lib/components/ui/sheet/index.js';
+	import { Slider } from '$lib/components/ui/slider/index.js';
+	import { Switch } from '$lib/components/ui/switch/index.js';
+	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
+
+	type Pattern = {
+		id: string;
+		label: string;
+		syllables: string[];
+	};
+
+	type GroupingPreset = {
+		id: string;
+		label: string;
+		groups: number[];
+	};
+
+	const meterOptions = ['1', '2', '3', '4', '5', '6', '7', '8'];
+	const roleOptions = ['instrumentalist', 'drummer', 'singer'] as const;
+	const phaseOptions = ['rhythm', 'harmony'] as const;
+
+	type Role = (typeof roleOptions)[number];
+	type Phase = (typeof phaseOptions)[number];
+
+	const patternBank: Record<number, Pattern[]> = {
+		1: [{ id: '1-ta', label: 'Ta', syllables: ['Ta'] }],
+		2: [{ id: '2-taka', label: 'Ta Ka', syllables: ['Ta', 'Ka'] }],
+		3: [{ id: '3-takita', label: 'Ta Ki Ta', syllables: ['Ta', 'Ki', 'Ta'] }],
+		4: [
+			{ id: '4-takadimi', label: 'Ta Ka Di Mi', syllables: ['Ta', 'Ka', 'Di', 'Mi'] }
+		],
+		5: [
+			{ id: '5-tatingenato', label: 'Ta Tin Ge Na To', syllables: ['Ta', 'Tin', 'Ge', 'Na', 'To'] }
+		],
+		6: [
+			{
+				id: '6-takita-takita',
+				label: 'Ta Ki Ta Ta Ki Ta',
+				syllables: ['Ta', 'Ki', 'Ta', 'Ta', 'Ki', 'Ta']
+			}
+		],
+		7: [
+			{
+				id: '7-takita-takadimi',
+				label: 'Ta Ki Ta Ta Ka Di Mi',
+				syllables: ['Ta', 'Ki', 'Ta', 'Ta', 'Ka', 'Di', 'Mi']
+			},
+			{
+				id: '7-takadimi-takita',
+				label: 'Ta Ka Di Mi Ta Ki Ta',
+				syllables: ['Ta', 'Ka', 'Di', 'Mi', 'Ta', 'Ki', 'Ta']
+			}
+		],
+		8: [
+			{
+				id: '8-takadimi-takadimi',
+				label: 'Ta Ka Di Mi Ta Ka Di Mi',
+				syllables: ['Ta', 'Ka', 'Di', 'Mi', 'Ta', 'Ka', 'Di', 'Mi']
+			},
+			{
+				id: '8-3-3-2',
+				label: 'Ta Ki Ta Ta Ki Ta Ta Ka',
+				syllables: ['Ta', 'Ki', 'Ta', 'Ta', 'Ki', 'Ta', 'Ta', 'Ka']
+			}
+		]
+	};
+
+	const groupingPresets: Record<number, GroupingPreset[]> = {
+		1: [{ id: '1-1', label: '1', groups: [1] }],
+		2: [{ id: '2-2', label: '2', groups: [2] }],
+		3: [
+			{ id: '3-3', label: '3', groups: [3] },
+			{ id: '3-1-2', label: '1 + 2', groups: [1, 2] }
+		],
+		4: [
+			{ id: '4-4', label: '4', groups: [4] },
+			{ id: '4-2-2', label: '2 + 2', groups: [2, 2] },
+			{ id: '4-3-1', label: '3 + 1', groups: [3, 1] }
+		],
+		5: [
+			{ id: '5-3-2', label: '3 + 2', groups: [3, 2] },
+			{ id: '5-2-3', label: '2 + 3', groups: [2, 3] }
+		],
+		6: [
+			{ id: '6-3-3', label: '3 + 3', groups: [3, 3] },
+			{ id: '6-2-2-2', label: '2 + 2 + 2', groups: [2, 2, 2] }
+		],
+		7: [
+			{ id: '7-3-2-2', label: '3 + 2 + 2', groups: [3, 2, 2] },
+			{ id: '7-2-2-3', label: '2 + 2 + 3', groups: [2, 2, 3] },
+			{ id: '7-2-3-2', label: '2 + 3 + 2', groups: [2, 3, 2] }
+		],
+		8: [
+			{ id: '8-4-4', label: '4 + 4', groups: [4, 4] },
+			{ id: '8-3-3-2', label: '3 + 3 + 2', groups: [3, 3, 2] },
+			{ id: '8-2-3-3', label: '2 + 3 + 3', groups: [2, 3, 3] },
+			{ id: '8-2-2-2-2', label: '2 + 2 + 2 + 2', groups: [2, 2, 2, 2] }
+		]
+	};
+
+	let role = $state<Role>('instrumentalist');
+	let phase = $state<Phase>('rhythm');
+	let bpmValue = $state(96);
+	let meterValue = $state('4');
+	let patternId = $state(patternBank[4][0].id);
+	let groupingId = $state(groupingPresets[4][0].id);
+	let countIn = $state(true);
+	let isPlaying = $state(false);
+	let stage: RhythmStage = $state('idle');
+	let currentStep = $state(0);
+	let currentIsGroupStart = $state(false);
+	let lastConfigKey = $state('');
+	let lastRole = $state<Role>('instrumentalist');
+	let settingsHydrated = $state(false);
+	let patternSheetOpen = $state(false);
+	let tipsSheetOpen = $state(false);
+	let mobileBpmOpen = $state(false);
+	let learnMode = $state(false);
+	let learnStep = $state(0);
+	let learnSkipped = $state(false);
+	let pulseMix = $state(70);
+	let subdivisionMix = $state(50);
+	let groupAccentMode = $state<'off' | 'soft' | 'strong'>('soft');
+	let harmonyKey = $state('0');
+	let harmonyFunctionKey = $state('0');
+	let harmonyKeyMode = $state<'major' | 'minor'>('major');
+	let harmonyChordMode = $state<'function' | 'free'>('function');
+	let harmonyAdvanceKey = $state(false);
+	let harmonyFifthsDirection = $state<'1' | '-1'>('1');
+	let harmonyFunction = $state('I');
+	let harmonyTriad = $state<TriadType>('major');
+	let harmonyInversion = $state<0 | 1 | 2>(0);
+	let harmonyDroneOn = $state(false);
+	let harmonyDroneVolume = $state(40);
+	let harmonyDroneBlend = $state(40);
+	let harmonyQuizMode = $state(false);
+	let harmonyReveal = $state(false);
+
+	const engine = new RhythmEngine({
+		onTick: (tick: RhythmTick) => {
+			currentStep = tick.step;
+			currentIsGroupStart = tick.isGroupStart;
+			stage = tick.stage;
+		},
+		onStageChange: (nextStage) => {
+			stage = nextStage;
+		}
+	});
+
+	const harmonyEngine = new HarmonyEngine();
+
+	const stopPlayback = () => {
+		engine.stop();
+		isPlaying = false;
+		stage = 'idle';
+		currentStep = 0;
+		currentIsGroupStart = false;
+	};
+
+	const startPlayback = () => {
+		engine.setConfig({
+			bpm: bpmValue,
+			grouping: grouping.groups,
+			totalSteps: currentPattern.syllables.length,
+			countIn,
+			countInBars: 1,
+			pulseLevel: effectiveMix.pulse,
+			subdivisionLevel: effectiveMix.subdivision,
+			groupingLevel: effectiveMix.grouping
+		} as Partial<RhythmEngineConfig>);
+		engine.start();
+		isPlaying = true;
+	};
+
+	const togglePlayback = () => {
+		if (isPlaying) {
+			stopPlayback();
+		} else {
+			startPlayback();
+		}
+	};
+
+	const roleLabels: Record<Role, string> = {
+		instrumentalist: 'Instrumentalist',
+		drummer: 'Drummer',
+		singer: 'Singer'
+	};
+
+	const phaseLabels: Record<Phase, string> = {
+		rhythm: 'Rhythm',
+		harmony: 'Harmony'
+	};
+
+	const rolePresets: Record<Role, { bpm: number; countIn: boolean }> = {
+		instrumentalist: { bpm: 96, countIn: true },
+		drummer: { bpm: 104, countIn: true },
+		singer: { bpm: 84, countIn: true }
+	};
+
+	const roleCopy: Record<
+		Role,
+		{
+			header: string;
+			instructions: string;
+			lanes: { foot: string; clap: string; voice: string };
+			laneFocus: { foot: string; clap: string; voice: string };
+		}
+	> = {
+		instrumentalist: {
+			header: 'Balance pulse, grouping, and syllables while keeping phrasing clear.',
+			instructions: 'Tap the pulse, clap subdivisions, and speak syllables to lock in grouping.',
+			lanes: {
+				foot: 'Pulse',
+				clap: 'Subdivision',
+				voice: 'Syllables'
+			},
+			laneFocus: {
+				foot: 'Tap the base pulse evenly.',
+				clap: 'Clap every subdivision with clarity.',
+				voice: 'Speak konnakol with steady flow.'
+			}
+		},
+		drummer: {
+			header: 'Drive the groove with strong accents and crisp subdivisions.',
+			instructions: 'Foot the group accents, clap the subdivisions, and speak syllables.',
+			lanes: {
+				foot: 'Foot',
+				clap: 'Stick',
+				voice: 'Syllables'
+			},
+			laneFocus: {
+				foot: 'Mark the group accents solidly.',
+				clap: 'Keep subdivision clicks tight.',
+				voice: 'Speak syllables to anchor the grid.'
+			}
+		},
+		singer: {
+			header: 'Lead with the voice while keeping the pulse grounded.',
+			instructions: 'Use body pulse, clap subdivisions lightly, and sing the syllables.',
+			lanes: {
+				foot: 'Pulse',
+				clap: 'Light clap',
+				voice: 'Voice'
+			},
+			laneFocus: {
+				foot: 'Feel pulse in your body.',
+				clap: 'Keep subdivisions soft and even.',
+				voice: 'Sing the syllables clearly.'
+			}
+		}
+	};
+
+	const learnSteps = [
+		{
+			id: 'pulse',
+			label: 'Pulse only',
+			focus: 'foot' as const,
+			copy: {
+				instrumentalist: 'Tap the pulse. Keep it steady for 8 bars.',
+				drummer: 'Foot the pulse. Keep the accents locked.',
+				singer: 'Feel the pulse in your body. Keep it calm and even.'
+			}
+		},
+		{
+			id: 'subdivision',
+			label: 'Subdivision only',
+			focus: 'clap' as const,
+			copy: {
+				instrumentalist: 'Clap every subdivision. No rushing.',
+				drummer: 'Stick the subdivisions with precision.',
+				singer: 'Lightly clap subdivisions without tension.'
+			}
+		},
+		{
+			id: 'syllables',
+			label: 'Syllables only',
+			focus: 'voice' as const,
+			copy: {
+				instrumentalist: 'Speak the syllables clearly and evenly.',
+				drummer: 'Speak syllables to anchor the grid.',
+				singer: 'Sing the syllables with relaxed breath.'
+			}
+		},
+		{
+			id: 'combine',
+			label: 'Combine all three',
+			focus: 'all' as const,
+			copy: {
+				instrumentalist: 'Pulse, subdivisions, and syllables together.',
+				drummer: 'Foot + stick + syllables in one loop.',
+				singer: 'Body pulse + clap + voice together.'
+			}
+		},
+		{
+			id: 'grouping',
+			label: 'Feel grouping',
+			focus: 'grouping' as const,
+			copy: {
+				instrumentalist: 'Listen for the grouping click. Count 3 + 2, then 2 + 3.',
+				drummer: 'Listen for the grouping click and drive the accents.',
+				singer: 'Listen for the grouping click and phrase it.'
+			}
+		}
+	] as const;
+
+	const meter = $derived(Number(meterValue));
+	const patterns = $derived(patternBank[meter]);
+	const currentPattern = $derived(
+		patterns.find((pattern) => pattern.id === patternId) ?? patterns[0]
+	);
+	const groupings = $derived(groupingPresets[meter]);
+	const grouping = $derived(
+		groupings.find((preset) => preset.id === groupingId) ?? groupings[0]
+	);
+	const totalSteps = $derived(currentPattern.syllables.length);
+	const stepIndices = $derived(Array.from({ length: totalSteps }, (_, index) => index));
+	const groupSegments = $derived(
+		grouping.groups.reduce((acc: { start: number; size: number }[], size) => {
+			const start = acc.length ? acc[acc.length - 1].start + acc[acc.length - 1].size : 0;
+			return [...acc, { start, size }];
+		}, [])
+	);
+	const playheadLeft = $derived(`${(currentStep / Math.max(totalSteps, 1)) * 100}%`);
+	const configKey = $derived(
+		`${bpmValue}-${meter}-${patternId}-${groupingId}-${countIn}-${pulseMix}-${subdivisionMix}-${groupAccentMode}-${learnMode}-${learnStep}`
+	);
+	const roleStyle = $derived(
+		role === 'drummer'
+			? {
+				foot: 'text-foreground',
+				clap: 'text-foreground',
+				voice: 'text-muted-foreground'
+			}
+			: role === 'singer'
+				? {
+					foot: 'text-muted-foreground',
+					clap: 'text-muted-foreground',
+					voice: 'text-foreground'
+				}
+				: {
+					foot: 'text-foreground',
+					clap: 'text-foreground',
+					voice: 'text-foreground'
+				}
+	);
+	const currentLearnStep = $derived(learnSteps[learnStep] ?? learnSteps[0]);
+	const learnFocus = $derived(currentLearnStep.focus);
+	const learnEmphasis = $derived({
+		foot: learnMode && (learnFocus === 'foot' || learnFocus === 'all'),
+		clap: learnMode && (learnFocus === 'clap' || learnFocus === 'all'),
+		voice: learnMode && (learnFocus === 'voice' || learnFocus === 'all'),
+		grouping: learnMode && learnFocus === 'grouping'
+	});
+	const groupingLevel = $derived(
+		groupAccentMode === 'off' ? 0 : groupAccentMode === 'strong' ? 0.85 : 0.45
+	);
+	const effectiveMix = $derived.by(() => {
+		if (!learnMode) {
+			return {
+				pulse: pulseMix / 100,
+				subdivision: subdivisionMix / 100,
+				grouping: groupingLevel
+			};
+		}
+		if (learnFocus === 'grouping') {
+			return {
+				pulse: 0.1,
+				subdivision: 0,
+				grouping: 1
+			};
+		}
+		if (learnFocus === 'foot') {
+			return {
+				pulse: 0.8,
+				subdivision: 0.2,
+				grouping: groupingLevel
+			};
+		}
+		if (learnFocus === 'clap') {
+			return {
+				pulse: 0.2,
+				subdivision: 0.8,
+				grouping: groupingLevel
+			};
+		}
+		if (learnFocus === 'voice') {
+			return {
+				pulse: 0.3,
+				subdivision: 0.3,
+				grouping: groupingLevel
+			};
+		}
+		return {
+			pulse: pulseMix / 100,
+			subdivision: subdivisionMix / 100,
+			grouping: groupingLevel
+		};
+	});
+
+	const harmonyKeys = [
+		{ label: 'C', pc: 0 },
+		{ label: 'C#/Db', pc: 1 },
+		{ label: 'D', pc: 2 },
+		{ label: 'D#/Eb', pc: 3 },
+		{ label: 'E', pc: 4 },
+		{ label: 'F', pc: 5 },
+		{ label: 'F#/Gb', pc: 6 },
+		{ label: 'G', pc: 7 },
+		{ label: 'G#/Ab', pc: 8 },
+		{ label: 'A', pc: 9 },
+		{ label: 'A#/Bb', pc: 10 },
+		{ label: 'B', pc: 11 }
+	];
+	const harmonyFunctionsMajor = ['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°'];
+	const harmonyFunctionsMinor = ['i', 'ii°', 'III', 'iv', 'v', 'VI', 'VII'];
+	const circleOfFifths = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5];
+	const harmonyTriads: { value: TriadType; label: string }[] = [
+		{ value: 'major', label: 'Major' },
+		{ value: 'minor', label: 'Minor' },
+		{ value: 'diminished', label: 'Diminished' },
+		{ value: 'augmented', label: 'Augmented' }
+	];
+	const majorScaleOffsets = [0, 2, 4, 5, 7, 9, 11];
+	const minorScaleOffsets = [0, 2, 3, 5, 7, 8, 10];
+	const majorQualities: TriadType[] = ['major', 'minor', 'minor', 'major', 'major', 'minor', 'diminished'];
+	const minorQualities: TriadType[] = [
+		'minor',
+		'diminished',
+		'major',
+		'minor',
+		'minor',
+		'major',
+		'major'
+	];
+	const harmonyKeyLabel = $derived(
+		harmonyKeys.find((key) => String(key.pc) === harmonyKey)?.label ?? 'C'
+	);
+	const harmonyFunctionKeyLabel = $derived(
+		harmonyKeys.find((key) => String(key.pc) === harmonyFunctionKey)?.label ?? 'C'
+	);
+	const harmonyFunctions = $derived(
+		harmonyKeyMode === 'major' ? harmonyFunctionsMajor : harmonyFunctionsMinor
+	);
+	const harmonyFunctionIndex = $derived(harmonyFunctions.indexOf(harmonyFunction));
+	const harmonyRootPc = $derived(
+		(Number(harmonyFunctionKey) +
+			(harmonyKeyMode === 'major'
+				? majorScaleOffsets[harmonyFunctionIndex]
+				: minorScaleOffsets[harmonyFunctionIndex])!) %
+			12
+	);
+	const harmonyDerivedTriad = $derived(
+		harmonyKeyMode === 'major'
+			? majorQualities[harmonyFunctionIndex]
+			: minorQualities[harmonyFunctionIndex]
+	);
+	const harmonyInversionLabel = $derived(
+		harmonyInversion === 0 ? 'Root position' : harmonyInversion === 1 ? '1st inversion' : '2nd inversion'
+	);
+
+	$effect(() => {
+		if (!patterns.find((pattern) => pattern.id === patternId)) {
+			patternId = patterns[0].id;
+		}
+	});
+
+	$effect(() => {
+		if (!groupings.find((preset) => preset.id === groupingId)) {
+			groupingId = groupings[0].id;
+		}
+	});
+
+	$effect(() => {
+		if (!settingsHydrated) {
+			lastRole = role;
+			return;
+		}
+		if (role !== lastRole) {
+			const preset = rolePresets[role];
+			bpmValue = preset.bpm;
+			countIn = preset.countIn;
+			lastRole = role;
+		}
+	});
+
+	$effect(() => {
+		if (isPlaying && configKey !== lastConfigKey) {
+			stopPlayback();
+			startPlayback();
+		}
+		lastConfigKey = configKey;
+	});
+
+	$effect(() => {
+		if (phase === 'harmony') {
+			stopPlayback();
+		} else {
+			harmonyEngine.stopDrone();
+		}
+	});
+
+	$effect(() => {
+		if (!harmonyFunctions.includes(harmonyFunction)) {
+			harmonyFunction = harmonyFunctions[0];
+		}
+	});
+
+	$effect(() => {
+		harmonyEngine.setKeyPc(Number(harmonyKey));
+	});
+
+	$effect(() => {
+		harmonyEngine.setDroneVolume(harmonyDroneVolume / 100);
+	});
+
+	$effect(() => {
+		harmonyEngine.setDroneBlend(harmonyDroneBlend / 100);
+	});
+
+	$effect(() => {
+		if (harmonyDroneOn) {
+			harmonyEngine.startDrone();
+		} else {
+			harmonyEngine.stopDrone();
+		}
+	});
+
+	const nextLearnStep = () => {
+		if (learnStep < learnSteps.length - 1) {
+			learnStep += 1;
+		} else {
+			learnMode = false;
+			learnSkipped = true;
+		}
+	};
+
+	const prevLearnStep = () => {
+		if (learnStep > 0) learnStep -= 1;
+	};
+
+	const exitLearnMode = () => {
+		learnMode = false;
+		learnSkipped = true;
+	};
+
+	const toggleLearnMode = () => {
+		learnMode = !learnMode;
+		if (learnMode) {
+			learnStep = 0;
+			learnSkipped = false;
+		}
+	};
+
+	const advanceHarmonyKey = () => {
+		const currentIndex = circleOfFifths.indexOf(Number(harmonyFunctionKey));
+		const direction = Number(harmonyFifthsDirection) as 1 | -1;
+		const nextIndex = (currentIndex + direction + circleOfFifths.length) % circleOfFifths.length;
+		harmonyFunctionKey = String(circleOfFifths[nextIndex]);
+	};
+
+	const playHarmonyChord = () => {
+		const inversion = Math.floor(Math.random() * 3) as 0 | 1 | 2;
+		harmonyInversion = inversion;
+		harmonyEngine.playChord({
+			rootPc: harmonyRootPc,
+			triad: harmonyChordMode === 'function' ? harmonyDerivedTriad : harmonyTriad,
+			inversion
+		});
+		if (harmonyQuizMode) harmonyReveal = false;
+		if (harmonyAdvanceKey) {
+			advanceHarmonyKey();
+		}
+	};
+
+	onMount(() => {
+		if (typeof window === 'undefined') return;
+		const raw = window.localStorage.getItem('rhythm-console');
+		if (raw) {
+			try {
+					const saved = JSON.parse(raw) as Partial<{
+						phase: Phase;
+						role: Role;
+						bpm: number;
+						meterValue: string;
+						patternId: string;
+						groupingId: string;
+						countIn: boolean;
+						learnMode: boolean;
+						learnStep: number;
+						learnSkipped: boolean;
+						pulseMix: number;
+						subdivisionMix: number;
+						groupAccentMode: 'off' | 'soft' | 'strong';
+						harmonyKey: string;
+						harmonyFunctionKey: string;
+						harmonyKeyMode: 'major' | 'minor';
+						harmonyChordMode: 'function' | 'free';
+						harmonyAdvanceKey: boolean;
+						harmonyFifthsDirection: '1' | '-1';
+						harmonyFunction: string;
+						harmonyTriad: TriadType;
+						harmonyDroneOn: boolean;
+						harmonyDroneVolume: number;
+						harmonyDroneBlend: number;
+						harmonyQuizMode: boolean;
+				}>;
+				if (saved.phase && phaseOptions.includes(saved.phase)) phase = saved.phase;
+				if (saved.role && roleOptions.includes(saved.role)) role = saved.role;
+				if (typeof saved.bpm === 'number') bpmValue = saved.bpm;
+				if (typeof saved.meterValue === 'string') meterValue = saved.meterValue;
+				if (typeof saved.patternId === 'string') patternId = saved.patternId;
+				if (typeof saved.groupingId === 'string') groupingId = saved.groupingId;
+					if (typeof saved.countIn === 'boolean') countIn = saved.countIn;
+					if (typeof saved.learnMode === 'boolean') learnMode = saved.learnMode;
+					if (typeof saved.learnStep === 'number') learnStep = saved.learnStep;
+					if (typeof saved.learnSkipped === 'boolean') learnSkipped = saved.learnSkipped;
+					if (typeof saved.pulseMix === 'number') pulseMix = saved.pulseMix;
+					if (typeof saved.subdivisionMix === 'number') subdivisionMix = saved.subdivisionMix;
+					if (saved.groupAccentMode) groupAccentMode = saved.groupAccentMode;
+					if (typeof saved.harmonyKey === 'string') harmonyKey = saved.harmonyKey;
+					if (typeof saved.harmonyFunctionKey === 'string')
+						harmonyFunctionKey = saved.harmonyFunctionKey;
+					if (saved.harmonyKeyMode) harmonyKeyMode = saved.harmonyKeyMode;
+					if (saved.harmonyChordMode) harmonyChordMode = saved.harmonyChordMode;
+					if (typeof saved.harmonyAdvanceKey === 'boolean')
+						harmonyAdvanceKey = saved.harmonyAdvanceKey;
+					if (saved.harmonyFifthsDirection)
+						harmonyFifthsDirection = saved.harmonyFifthsDirection;
+					if (typeof saved.harmonyFunction === 'string') harmonyFunction = saved.harmonyFunction;
+					if (saved.harmonyTriad) harmonyTriad = saved.harmonyTriad;
+				if (typeof saved.harmonyDroneOn === 'boolean') harmonyDroneOn = saved.harmonyDroneOn;
+				if (typeof saved.harmonyDroneVolume === 'number')
+					harmonyDroneVolume = saved.harmonyDroneVolume;
+				if (typeof saved.harmonyDroneBlend === 'number')
+					harmonyDroneBlend = saved.harmonyDroneBlend;
+				if (typeof saved.harmonyQuizMode === 'boolean')
+					harmonyQuizMode = saved.harmonyQuizMode;
+				} catch (error) {
+					console.warn('Failed to load rhythm settings', error);
+				}
+			}
+		if (!raw && !learnSkipped) {
+			learnMode = true;
+			learnStep = 0;
+		}
+		settingsHydrated = true;
+	});
+
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		window.localStorage.setItem(
+			'rhythm-console',
+			JSON.stringify({
+				phase,
+				role,
+				bpm: bpmValue,
+				meterValue,
+				patternId,
+				groupingId,
+				countIn,
+				learnMode,
+				learnStep,
+				learnSkipped,
+				pulseMix,
+				subdivisionMix,
+				groupAccentMode,
+				harmonyKey,
+				harmonyFunctionKey,
+				harmonyKeyMode,
+				harmonyChordMode,
+				harmonyAdvanceKey,
+				harmonyFifthsDirection,
+				harmonyFunction,
+				harmonyTriad,
+				harmonyDroneOn,
+				harmonyDroneVolume,
+				harmonyDroneBlend,
+				harmonyQuizMode
+			})
+		);
+	});
+
+	onDestroy(() => {
+		engine.stop();
+		harmonyEngine.stopDrone();
+	});
+</script>
+
+<div class="min-h-screen px-6 py-10 pb-32 lg:px-10 lg:pb-10">
+	<div class="mx-auto flex max-w-6xl flex-col gap-6 lg:gap-8">
+		<header class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+			<div class="space-y-2">
+				<div class="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+					Phase 1 · {phaseLabels[phase]}
+				</div>
+				<h1 class="font-display text-2xl font-semibold text-foreground md:text-4xl">
+					{phase === 'rhythm' ? 'Rhythm Console' : 'Harmony Console'}
+				</h1>
+				{#if phase === 'rhythm'}
+					<p class="hidden max-w-xl text-sm text-muted-foreground md:block md:text-base">
+						{roleCopy[role].header} {roleCopy[role].instructions}
+					</p>
+				{:else}
+					<p class="hidden max-w-xl text-sm text-muted-foreground md:block md:text-base">
+						Anchor the key with a drone, then train chord function and inversion awareness.
+					</p>
+				{/if}
+				<ToggleGroup.Root type="single" bind:value={phase} class="mt-3 flex flex-wrap gap-2">
+					{#each phaseOptions as option}
+						<ToggleGroup.Item value={option} class="px-4 text-xs">
+							{phaseLabels[option]}
+						</ToggleGroup.Item>
+					{/each}
+				</ToggleGroup.Root>
+			</div>
+			<div class="hidden items-center gap-3 lg:flex">
+				<Badge class="px-3 py-1 text-xs">Studio Console</Badge>
+				<Badge variant="secondary" class="px-3 py-1 text-xs">
+					{roleLabels[role]}
+				</Badge>
+				<Badge variant="secondary" class="px-3 py-1 text-xs">
+					Odd meter focus
+				</Badge>
+			</div>
+		</header>
+
+		{#if phase === 'rhythm'}
+		<div class="flex flex-col gap-6 lg:grid lg:grid-cols-[320px,1fr]">
+			<aside class="order-2 space-y-6 lg:order-none">
+				<div class="space-y-4 lg:hidden">
+				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+						<Card.Header>
+							<Card.Title class="font-display text-lg">Role</Card.Title>
+							<Card.Description>Pick a focus for this session.</Card.Description>
+						</Card.Header>
+						<Card.Content class="space-y-3">
+							<ToggleGroup.Root type="single" bind:value={role} class="flex flex-wrap gap-2">
+								{#each roleOptions as roleValue}
+									<ToggleGroup.Item value={roleValue} class="px-3 text-xs capitalize">
+										{roleLabels[roleValue]}
+									</ToggleGroup.Item>
+								{/each}
+							</ToggleGroup.Root>
+							<div class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+								{roleCopy[role].instructions}
+							</div>
+							<div class="flex items-center justify-between rounded-lg border border-border/60 bg-[var(--surface-2)] px-3 py-2">
+								<span class="text-xs text-muted-foreground">Learn mode</span>
+								<Button
+									size="sm"
+									variant={learnMode ? 'default' : 'secondary'}
+									onclick={toggleLearnMode}
+								>
+									{learnMode ? 'On' : 'Off'}
+								</Button>
+							</div>
+						</Card.Content>
+					</Card.Root>
+
+					<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
+						<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
+							Pulse & Meter
+							<span class="text-xs text-muted-foreground">{bpmValue} bpm · {meter}</span>
+						</summary>
+						<div class="mt-4 space-y-4">
+							<div class="space-y-2">
+								<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									<span>Pulse BPM</span>
+									<span class="text-foreground">{bpmValue}</span>
+								</div>
+								<Slider type="single" min={40} max={180} step={1} bind:value={bpmValue} />
+							</div>
+							<div class="hidden lg:block">
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									Meter
+								</div>
+								<ToggleGroup.Root type="single" bind:value={meterValue} class="mt-2 flex flex-wrap gap-2">
+									{#each meterOptions as value}
+										<ToggleGroup.Item value={value} class="px-3">
+											{value}
+										</ToggleGroup.Item>
+									{/each}
+								</ToggleGroup.Root>
+							</div>
+							<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+								<div>
+									<div class="text-sm font-semibold">Count-in bar</div>
+									<div class="text-xs text-muted-foreground">One bar before playback.</div>
+								</div>
+								<Switch bind:checked={countIn} />
+							</div>
+						</div>
+					</details>
+
+					{#if !learnMode}
+						<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
+						<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
+							Grouping
+							<span class="text-xs text-muted-foreground">{grouping.label}</span>
+						</summary>
+						<div class="mt-4 space-y-4">
+							<ToggleGroup.Root type="single" bind:value={groupingId} class="flex flex-wrap gap-2">
+								{#each groupings as preset}
+									<ToggleGroup.Item value={preset.id} class="px-3 text-xs">
+										{preset.label}
+									</ToggleGroup.Item>
+								{/each}
+							</ToggleGroup.Root>
+							<div class="space-y-2 text-xs text-muted-foreground">
+								<div class="flex items-center justify-between">
+									<span>{roleCopy[role].lanes.foot}</span>
+									<span>Group accents</span>
+								</div>
+								<div class="flex items-center justify-between">
+									<span>{roleCopy[role].lanes.clap}</span>
+									<span>Every subdivision</span>
+								</div>
+								<div class="flex items-center justify-between">
+									<span>{roleCopy[role].lanes.voice}</span>
+									<span>Konnakol syllables</span>
+								</div>
+							</div>
+						</div>
+						</details>
+					{/if}
+
+					{#if !learnMode}
+						<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
+							<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
+								Sound
+								<span class="text-xs text-muted-foreground">Pulse + Group</span>
+							</summary>
+							<div class="mt-4 space-y-4">
+								<div class="space-y-2">
+									<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										<span>Pulse level</span>
+										<span class="text-foreground">{pulseMix}%</span>
+									</div>
+									<Slider type="single" min={0} max={100} step={5} bind:value={pulseMix} />
+								</div>
+								<div class="space-y-2">
+									<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										<span>Subdivision level</span>
+										<span class="text-foreground">{subdivisionMix}%</span>
+									</div>
+									<Slider type="single" min={0} max={100} step={5} bind:value={subdivisionMix} />
+								</div>
+								<div class="space-y-2">
+									<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										Group accent
+									</div>
+									<ToggleGroup.Root type="single" bind:value={groupAccentMode} class="flex flex-wrap gap-2">
+										<ToggleGroup.Item value="off" class="px-3 text-xs">Off</ToggleGroup.Item>
+										<ToggleGroup.Item value="soft" class="px-3 text-xs">Soft</ToggleGroup.Item>
+										<ToggleGroup.Item value="strong" class="px-3 text-xs">Strong</ToggleGroup.Item>
+									</ToggleGroup.Root>
+								</div>
+							</div>
+						</details>
+					{/if}
+
+					{#if !learnMode}
+						<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+						<Card.Header>
+							<Card.Title class="font-display text-lg">Pattern</Card.Title>
+							<Card.Description>Open the full-screen pattern list.</Card.Description>
+						</Card.Header>
+						<Card.Content>
+							<Button variant="secondary" class="w-full" onclick={() => (patternSheetOpen = true)}>
+								Choose pattern
+							</Button>
+						</Card.Content>
+						</Card.Root>
+					{/if}
+				</div>
+
+				<div class="hidden space-y-6 lg:block">
+					<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+					<Card.Header>
+						<Card.Title class="font-display text-lg">Role</Card.Title>
+						<Card.Description>Optimize the exercise for how you play.</Card.Description>
+					</Card.Header>
+					<Card.Content class="space-y-4">
+						<ToggleGroup.Root type="single" bind:value={role} class="flex flex-wrap gap-2">
+							{#each roleOptions as roleValue}
+								<ToggleGroup.Item value={roleValue} class="px-3 text-xs capitalize">
+									{roleLabels[roleValue]}
+								</ToggleGroup.Item>
+							{/each}
+						</ToggleGroup.Root>
+						<div class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+							{roleCopy[role].instructions}
+						</div>
+						<div class="flex items-center justify-between rounded-lg border border-border/60 bg-[var(--surface-2)] px-3 py-2">
+							<span class="text-xs text-muted-foreground">Learn mode</span>
+							<Button
+								size="sm"
+								variant={learnMode ? 'default' : 'secondary'}
+								onclick={toggleLearnMode}
+							>
+								{learnMode ? 'On' : 'Off'}
+							</Button>
+						</div>
+					</Card.Content>
+				</Card.Root>
+					<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+						<Card.Header>
+							<Card.Title class="font-display text-lg">Pulse & Meter</Card.Title>
+							<Card.Description>Set the pulse, meter, and count-in.</Card.Description>
+						</Card.Header>
+						<Card.Content class="space-y-6">
+							<div class="space-y-2">
+								<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									<span>Pulse BPM</span>
+									<span class="text-foreground">{bpmValue}</span>
+								</div>
+								<Slider type="single" min={40} max={180} step={1} bind:value={bpmValue} />
+							</div>
+							<div class="space-y-2">
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									Meter
+								</div>
+								<ToggleGroup.Root type="single" bind:value={meterValue} class="flex flex-wrap gap-2">
+									{#each meterOptions as value}
+										<ToggleGroup.Item value={value} class="px-3">
+											{value}
+										</ToggleGroup.Item>
+									{/each}
+								</ToggleGroup.Root>
+							</div>
+							<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+								<div>
+									<div class="text-sm font-semibold">Count-in bar</div>
+									<div class="text-xs text-muted-foreground">One bar before playback.</div>
+								</div>
+								<Switch bind:checked={countIn} />
+							</div>
+						</Card.Content>
+					</Card.Root>
+
+					{#if !learnMode}
+						<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+					<Card.Header>
+						<Card.Title class="font-display text-lg">Grouping</Card.Title>
+						<Card.Description>Feel the meter in different groupings.</Card.Description>
+					</Card.Header>
+					<Card.Content class="space-y-4">
+						<ToggleGroup.Root type="single" bind:value={groupingId} class="flex flex-wrap gap-2">
+							{#each groupings as preset}
+								<ToggleGroup.Item value={preset.id} class="px-3 text-xs">
+									{preset.label}
+								</ToggleGroup.Item>
+							{/each}
+						</ToggleGroup.Root>
+						<Separator />
+						<div class="space-y-2 text-xs text-muted-foreground">
+							<div class="flex items-center justify-between">
+								<span>{roleCopy[role].lanes.foot}</span>
+								<span>Group accents</span>
+							</div>
+							<div class="flex items-center justify-between">
+								<span>{roleCopy[role].lanes.clap}</span>
+								<span>Every subdivision</span>
+							</div>
+							<div class="flex items-center justify-between">
+								<span>{roleCopy[role].lanes.voice}</span>
+								<span>Konnakol syllables</span>
+							</div>
+						</div>
+					</Card.Content>
+				</Card.Root>
+
+					<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+					<Card.Header>
+						<Card.Title class="font-display text-lg">Pattern</Card.Title>
+						<Card.Description>Pick the syllable sequence to sing.</Card.Description>
+					</Card.Header>
+					<Card.Content class="space-y-4">
+						<ToggleGroup.Root type="single" bind:value={patternId} class="flex flex-col gap-2">
+							{#each patterns as pattern}
+								<ToggleGroup.Item
+									value={pattern.id}
+									class="w-full justify-start px-3 text-xs"
+								>
+									{pattern.label}
+								</ToggleGroup.Item>
+							{/each}
+						</ToggleGroup.Root>
+					</Card.Content>
+						</Card.Root>
+					{/if}
+					{#if !learnMode}
+						<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+							<Card.Header>
+								<Card.Title class="font-display text-lg">Sound</Card.Title>
+								<Card.Description>Mix pulse, grouping, and subdivision clicks.</Card.Description>
+							</Card.Header>
+							<Card.Content class="space-y-4">
+								<div class="space-y-2">
+									<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										<span>Pulse level</span>
+										<span class="text-foreground">{pulseMix}%</span>
+									</div>
+									<Slider type="single" min={0} max={100} step={5} bind:value={pulseMix} />
+								</div>
+								<div class="space-y-2">
+									<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										<span>Subdivision level</span>
+										<span class="text-foreground">{subdivisionMix}%</span>
+									</div>
+									<Slider type="single" min={0} max={100} step={5} bind:value={subdivisionMix} />
+								</div>
+								<div class="space-y-2">
+									<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										Group accent
+									</div>
+									<ToggleGroup.Root type="single" bind:value={groupAccentMode} class="flex flex-wrap gap-2">
+										<ToggleGroup.Item value="off" class="px-3 text-xs">Off</ToggleGroup.Item>
+										<ToggleGroup.Item value="soft" class="px-3 text-xs">Soft</ToggleGroup.Item>
+										<ToggleGroup.Item value="strong" class="px-3 text-xs">Strong</ToggleGroup.Item>
+									</ToggleGroup.Root>
+								</div>
+							</Card.Content>
+						</Card.Root>
+					{/if}
+				</div>
+		</aside>
+
+			<main class="order-1 space-y-6 lg:order-none">
+				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-xl">
+					<Card.Header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+						<div>
+							<Card.Title class="font-display text-xl">Playback</Card.Title>
+						<Card.Description>
+							Pulse grid with foot, clap, and voice lanes.
+						</Card.Description>
+					</div>
+						<div class="flex items-center gap-3">
+							<Badge variant={stage === 'count-in' ? 'secondary' : 'default'} class="text-xs">
+								{stage === 'count-in'
+									? 'Count-in'
+									: stage === 'playing'
+										? 'Playing'
+										: 'Idle'}
+							</Badge>
+							<Button onclick={togglePlayback} class="hidden px-5 lg:inline-flex">
+								{isPlaying ? 'Stop' : 'Start'}
+							</Button>
+							<Button
+								variant="secondary"
+								size="sm"
+								class="lg:hidden"
+								onclick={() => (tipsSheetOpen = true)}
+							>
+								Tips
+							</Button>
+						</div>
+					</Card.Header>
+					<Card.Content>
+						<div class="space-y-6">
+							{#if learnMode}
+								<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+									<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										<span>Learn mode</span>
+										<span>{learnStep + 1} / {learnSteps.length}</span>
+									</div>
+									<div class="mt-2 text-sm font-semibold">{currentLearnStep.label}</div>
+									<div class="mt-1 text-sm text-muted-foreground">
+										{currentLearnStep.copy[role]}
+									</div>
+									<div class="mt-3 flex flex-wrap gap-2">
+										<Button size="sm" variant="secondary" onclick={prevLearnStep} disabled={learnStep === 0}>
+											Back
+										</Button>
+										<Button size="sm" onclick={nextLearnStep}>
+											{learnStep === learnSteps.length - 1 ? 'Finish' : 'Next step'}
+										</Button>
+										<Button size="sm" variant="ghost" onclick={exitLearnMode}>
+											Skip tutorial
+										</Button>
+									</div>
+								</div>
+							{/if}
+							<div
+								class="relative rounded-2xl border border-border/70 bg-[var(--surface-1)] p-4 lg:p-6"
+								data-stage={stage}
+							>
+									<div class="mb-4 flex items-center justify-between text-xs text-muted-foreground">
+										<span>Grid</span>
+										<span>{meter} steps · {grouping.label} · {roleLabels[role]}</span>
+									</div>
+
+								<div class="relative">
+								<div
+									class="grid gap-3 [grid-template-columns:minmax(72px,90px)_1fr] lg:[grid-template-columns:120px_1fr] lg:[--label-width:120px]"
+									style="--label-width: 90px;"
+								>
+								<div class="space-y-8 text-[11px] font-semibold uppercase tracking-wide lg:text-xs">
+									<div class={`${roleStyle.foot} ${learnMode && !learnEmphasis.foot ? 'opacity-40' : ''}`}>
+										{roleCopy[role].lanes.foot}
+									</div>
+									<div class={`${roleStyle.clap} ${learnMode && !learnEmphasis.clap ? 'opacity-40' : ''}`}>
+										{roleCopy[role].lanes.clap}
+									</div>
+									<div class={`${roleStyle.voice} ${learnMode && !learnEmphasis.voice ? 'opacity-40' : ''}`}>
+										{roleCopy[role].lanes.voice}
+									</div>
+								</div>
+
+										<div class="space-y-6">
+											<div class="grid gap-2">
+													<div
+														class={`grid ${learnMode && !learnEmphasis.foot ? 'opacity-40' : ''}`}
+														style={`grid-template-columns: repeat(${totalSteps}, minmax(0, 1fr));`}
+													>
+													{#each groupSegments as segment}
+														<div
+															class="flex flex-col items-center gap-2"
+															style={`grid-column: ${segment.start + 1} / ${segment.start + segment.size + 1};`}
+														>
+															<div
+																class={`h-1 w-full rounded-full ${
+																	learnEmphasis.grouping ? 'bg-primary/70' : 'bg-border/60'
+																}`}
+															></div>
+															<div
+																class={`text-[10px] font-semibold ${
+																	learnEmphasis.grouping ? 'text-foreground' : 'text-muted-foreground'
+																}`}
+															>
+																{segment.size}
+															</div>
+														</div>
+													{/each}
+												</div>
+												<div
+													class="grid"
+													style={`grid-template-columns: repeat(${totalSteps}, minmax(0, 1fr));`}
+												>
+													{#each stepIndices as step}
+														<div class="flex items-center justify-center">
+																<div
+																	class={`h-3 w-3 rounded-full ${
+																		currentStep === step && stage !== 'idle' && currentIsGroupStart
+																				? 'bg-[var(--pulse)] lg:shadow-[0_0_18px_rgba(162,103,47,0.6)]'
+																			: 'bg-border/70'
+																	}`}
+																></div>
+														</div>
+													{/each}
+												</div>
+											</div>
+
+										<div
+											class={`grid ${learnMode && !learnEmphasis.clap ? 'opacity-40' : ''}`}
+											style={`grid-template-columns: repeat(${totalSteps}, minmax(0, 1fr));`}
+										>
+											{#each stepIndices as step}
+												<div class="flex items-center justify-center">
+													<div
+														class={`h-2 w-2 rounded-full ${
+															currentStep === step && stage !== 'idle'
+																? 'bg-primary/80 lg:shadow-[0_0_14px_rgba(186,120,52,0.4)]'
+																: 'bg-border/60'
+													}`}
+													></div>
+												</div>
+											{/each}
+										</div>
+
+										<div
+											class={`grid text-xs font-semibold uppercase tracking-wide ${
+												learnMode && !learnEmphasis.voice ? 'opacity-40' : ''
+											}`}
+											style={`grid-template-columns: repeat(${totalSteps}, minmax(0, 1fr));`}
+										>
+											{#each currentPattern.syllables as syllable, index}
+												<div
+													class={`text-center ${
+														currentStep === index && stage !== 'idle'
+															? 'text-foreground'
+															: 'text-muted-foreground'
+													}`}
+												>
+													{syllable}
+												</div>
+											{/each}
+										</div>
+									</div>
+
+									<div
+										class="pointer-events-none absolute inset-y-0"
+										style={`left: calc(var(--label-width) + ${playheadLeft});`}
+									>
+										<div class="h-full w-px bg-primary/40"></div>
+									</div>
+								</div>
+							</div>
+
+							<div class="hidden gap-4 md:grid md:grid-cols-3">
+								<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+									<div class={`text-xs font-semibold uppercase tracking-wide ${roleStyle.foot}`}>
+										{roleCopy[role].lanes.foot}
+									</div>
+									<div class="text-sm">{roleCopy[role].laneFocus.foot}</div>
+								</div>
+								<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+									<div class={`text-xs font-semibold uppercase tracking-wide ${roleStyle.clap}`}>
+										{roleCopy[role].lanes.clap}
+									</div>
+									<div class="text-sm">{roleCopy[role].laneFocus.clap}</div>
+								</div>
+								<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+									<div class={`text-xs font-semibold uppercase tracking-wide ${roleStyle.voice}`}>
+										{roleCopy[role].lanes.voice}
+									</div>
+									<div class="text-sm">{roleCopy[role].laneFocus.voice}</div>
+								</div>
+							</div>
+						</div>
+					</Card.Content>
+				</Card.Root>
+			</main>
+		</div>
+	{:else}
+		<div class="flex flex-col gap-6 lg:grid lg:grid-cols-[320px,1fr]">
+			<aside class="order-2 space-y-6 lg:order-none">
+				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+					<Card.Header>
+						<Card.Title class="font-display text-lg">Key & Drone</Card.Title>
+						<Card.Description>Choose the tonal center and sustain it.</Card.Description>
+					</Card.Header>
+					<Card.Content class="space-y-4">
+						<div class="space-y-2">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key</div>
+							<Select.Root type="single" bind:value={harmonyKey as never}>
+								<Select.Trigger class="w-full">
+									<span>{harmonyKeyLabel}</span>
+								</Select.Trigger>
+								<Select.Content>
+									{#each harmonyKeys as key}
+										<Select.Item value={String(key.pc)}>{key.label}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+						</div>
+						<div class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+							Turn the drone on, then listen for how chords feel against it.
+						</div>
+						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<div>
+								<div class="text-sm font-semibold">Drone</div>
+								<div class="text-xs text-muted-foreground">Tonic + fifth blend.</div>
+							</div>
+							<Switch bind:checked={harmonyDroneOn} />
+						</div>
+						<div class="space-y-2">
+							<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+								<span>Drone volume</span>
+								<span class="text-foreground">{harmonyDroneVolume}%</span>
+							</div>
+							<Slider type="single" min={0} max={100} step={5} bind:value={harmonyDroneVolume} />
+						</div>
+						<div class="space-y-2">
+							<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+								<span>Fifth blend</span>
+								<span class="text-foreground">{harmonyDroneBlend}%</span>
+							</div>
+							<Slider type="single" min={0} max={100} step={5} bind:value={harmonyDroneBlend} />
+						</div>
+					</Card.Content>
+				</Card.Root>
+
+				<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
+					<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
+						Target chord
+						<span class="text-xs text-muted-foreground">
+							{harmonyFunction} · {harmonyChordMode === 'function' ? harmonyDerivedTriad : harmonyTriad}
+						</span>
+					</summary>
+					<div class="mt-4 space-y-4">
+						<div class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+							Function = the chord's role in the key. Function key can shift along the circle of fifths.
+						</div>
+						<div class="space-y-2">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mode</div>
+							<ToggleGroup.Root type="single" bind:value={harmonyKeyMode} class="flex flex-wrap gap-2">
+								<ToggleGroup.Item value="major" class="px-3 text-xs">Major</ToggleGroup.Item>
+								<ToggleGroup.Item value="minor" class="px-3 text-xs">Minor</ToggleGroup.Item>
+							</ToggleGroup.Root>
+						</div>
+						<div class="space-y-2">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Chord mode</div>
+							<ToggleGroup.Root type="single" bind:value={harmonyChordMode} class="flex flex-wrap gap-2">
+								<ToggleGroup.Item value="function" class="px-3 text-xs">Function</ToggleGroup.Item>
+								<ToggleGroup.Item value="free" class="px-3 text-xs">Free</ToggleGroup.Item>
+							</ToggleGroup.Root>
+						</div>
+						<div class="space-y-2">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Function key</div>
+							<Select.Root type="single" bind:value={harmonyFunctionKey as never}>
+								<Select.Trigger class="w-full">
+									<span>{harmonyFunctionKeyLabel}</span>
+								</Select.Trigger>
+								<Select.Content>
+									{#each harmonyKeys as key}
+										<Select.Item value={String(key.pc)}>{key.label}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+							<Button size="sm" variant="secondary" class="w-full" onclick={advanceHarmonyKey}>
+								Advance key (fifths)
+							</Button>
+						</div>
+						<div class="grid gap-3 sm:grid-cols-2">
+							<div class="space-y-2">
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									Function
+								</div>
+								<ToggleGroup.Root type="single" bind:value={harmonyFunction} class="flex flex-wrap gap-2">
+									{#each harmonyFunctions as fn}
+										<ToggleGroup.Item value={fn} class="px-3 text-xs">
+											{fn}
+										</ToggleGroup.Item>
+									{/each}
+								</ToggleGroup.Root>
+							</div>
+							{#if harmonyChordMode === 'free'}
+								<div class="space-y-2">
+									<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triad quality</div>
+									<ToggleGroup.Root type="single" bind:value={harmonyTriad} class="flex flex-wrap gap-2">
+										{#each harmonyTriads as triad}
+											<ToggleGroup.Item value={triad.value} class="px-3 text-xs">
+												{triad.label}
+											</ToggleGroup.Item>
+										{/each}
+									</ToggleGroup.Root>
+								</div>
+							{/if}
+						</div>
+						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<div>
+								<div class="text-sm font-semibold">Auto-advance key</div>
+								<div class="text-xs text-muted-foreground">Step by fifths after play.</div>
+							</div>
+							<Switch bind:checked={harmonyAdvanceKey} />
+						</div>
+						{#if harmonyAdvanceKey}
+							<ToggleGroup.Root type="single" bind:value={harmonyFifthsDirection} class="flex flex-wrap gap-2">
+								<ToggleGroup.Item value="1" class="px-3 text-xs">Clockwise</ToggleGroup.Item>
+								<ToggleGroup.Item value="-1" class="px-3 text-xs">Counter</ToggleGroup.Item>
+							</ToggleGroup.Root>
+						{/if}
+						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<div>
+								<div class="text-sm font-semibold">Quiz mode</div>
+								<div class="text-xs text-muted-foreground">Hide inversion until reveal.</div>
+							</div>
+							<Switch bind:checked={harmonyQuizMode} />
+						</div>
+					</div>
+				</details>
+			</aside>
+
+			<main class="order-1 space-y-6 lg:order-none">
+				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-xl">
+					<Card.Header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+						<div>
+							<Card.Title class="font-display text-xl">Harmony Trainer</Card.Title>
+							<Card.Description>
+								Listen for the function and inversion against the drone.
+							</Card.Description>
+						</div>
+						<div class="flex items-center gap-3">
+							<Badge variant="secondary" class="text-xs">Key {harmonyKeyLabel}</Badge>
+							<Button onclick={playHarmonyChord} class="px-5">Play chord</Button>
+						</div>
+					</Card.Header>
+					<Card.Content>
+						<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">How to use</div>
+							<div class="mt-2 text-sm">
+								1) Turn on the drone. 2) Choose a function key. 3) Press Play and listen for function + inversion.
+							</div>
+						</div>
+						<div class="grid gap-4 md:grid-cols-3">
+							<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Function</div>
+								<div class="text-sm font-semibold">
+									{harmonyQuizMode ? 'Hidden' : harmonyFunction}
+								</div>
+								<div class="text-xs text-muted-foreground">
+									Function key: {harmonyFunctionKeyLabel}
+								</div>
+							</div>
+							<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triad</div>
+								<div class="text-sm font-semibold">
+									{harmonyQuizMode
+										? 'Hidden'
+										: harmonyChordMode === 'function'
+											? harmonyDerivedTriad
+											: harmonyTriad}
+								</div>
+								<div class="text-xs text-muted-foreground">Random inversion each play</div>
+							</div>
+							<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Inversion</div>
+								{#if harmonyQuizMode && !harmonyReveal}
+									<div class="text-sm font-semibold">Hidden</div>
+									<Button size="sm" variant="secondary" class="mt-2" onclick={() => (harmonyReveal = true)}>
+										Reveal
+									</Button>
+								{:else}
+									<div class="text-sm font-semibold">{harmonyInversionLabel}</div>
+									<div class="text-xs text-muted-foreground">Last play</div>
+								{/if}
+							</div>
+						</div>
+						<div class="mt-6 rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+							<div class="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+								<span>Drone: {harmonyKeyLabel} · {harmonyDroneOn ? 'On' : 'Off'}</span>
+								<span>
+									Function key: {harmonyFunctionKeyLabel} · {harmonyFunction}
+								</span>
+								<span>
+									Triad: {harmonyChordMode === 'function' ? harmonyDerivedTriad : harmonyTriad}
+								</span>
+								<span>Inversion: {harmonyInversionLabel}</span>
+							</div>
+							<div class="mt-3 text-sm">
+								Listen for how the chord feels against the drone, then name its function.
+							</div>
+						</div>
+					</Card.Content>
+				</Card.Root>
+			</main>
+		</div>
+	{/if}
+	</div>
+</div>
+
+{#if phase === 'rhythm'}
+<Sheet.Root bind:open={patternSheetOpen}>
+	<Sheet.Content side="bottom" class="h-[92vh] rounded-t-3xl">
+		<Sheet.Header>
+			<Sheet.Title class="font-display text-xl">Patterns</Sheet.Title>
+			<Sheet.Description>
+				Choose a syllable pattern and meter for focused practice.
+			</Sheet.Description>
+		</Sheet.Header>
+		<div class="mt-6 space-y-6">
+			<div class="space-y-2">
+				<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+					Meter
+				</div>
+				<ToggleGroup.Root type="single" bind:value={meterValue} class="flex flex-wrap gap-2">
+					{#each meterOptions as value}
+						<ToggleGroup.Item value={value} class="px-3">
+							{value}
+						</ToggleGroup.Item>
+					{/each}
+				</ToggleGroup.Root>
+			</div>
+			<div class="space-y-2">
+				<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+					Pattern
+				</div>
+				<div class="space-y-2">
+					{#each patterns as pattern}
+						<Button
+							variant={pattern.id === patternId ? 'default' : 'secondary'}
+							class="w-full justify-start"
+							onclick={() => {
+								patternId = pattern.id;
+								patternSheetOpen = false;
+							}}
+						>
+							{pattern.label}
+						</Button>
+					{/each}
+				</div>
+			</div>
+		</div>
+	</Sheet.Content>
+</Sheet.Root>
+
+<Sheet.Root bind:open={tipsSheetOpen}>
+	<Sheet.Content side="bottom" class="h-[60vh] rounded-t-3xl">
+		<Sheet.Header>
+			<Sheet.Title class="font-display text-xl">Practice Tips</Sheet.Title>
+			<Sheet.Description>
+				Role-focused reminders for keeping the pulse grounded.
+			</Sheet.Description>
+		</Sheet.Header>
+		<div class="mt-6 grid gap-4">
+			<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+				<div class={`text-xs font-semibold uppercase tracking-wide ${roleStyle.foot}`}>
+					{roleCopy[role].lanes.foot}
+				</div>
+				<div class="text-sm">{roleCopy[role].laneFocus.foot}</div>
+			</div>
+			<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+				<div class={`text-xs font-semibold uppercase tracking-wide ${roleStyle.clap}`}>
+					{roleCopy[role].lanes.clap}
+				</div>
+				<div class="text-sm">{roleCopy[role].laneFocus.clap}</div>
+			</div>
+			<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+				<div class={`text-xs font-semibold uppercase tracking-wide ${roleStyle.voice}`}>
+					{roleCopy[role].lanes.voice}
+				</div>
+				<div class="text-sm">{roleCopy[role].laneFocus.voice}</div>
+			</div>
+		</div>
+	</Sheet.Content>
+</Sheet.Root>
+
+<div class="fixed inset-x-4 bottom-4 z-40 lg:hidden">
+	<div class="rounded-2xl border border-border/70 bg-card/95 px-4 py-3 shadow-xl backdrop-blur">
+		<div class="flex items-center justify-between gap-3">
+			<Button class="px-6" onclick={togglePlayback}>
+				{isPlaying ? 'Stop' : 'Start'}
+			</Button>
+			<Button variant="secondary" onclick={() => (mobileBpmOpen = !mobileBpmOpen)}>
+				{bpmValue} bpm
+			</Button>
+			<Button variant={learnMode ? 'default' : 'secondary'} onclick={toggleLearnMode}>
+				{learnMode ? 'Console' : 'Learn'}
+			</Button>
+		</div>
+		<div class="mt-3 flex items-center justify-between gap-3">
+			<div class="flex items-center gap-2">
+				<span class="text-xs text-muted-foreground">Count-in</span>
+				<Switch bind:checked={countIn} />
+			</div>
+			{#if learnMode}
+				<Button size="sm" onclick={nextLearnStep}>
+					{learnStep === learnSteps.length - 1 ? 'Finish' : 'Next'}
+				</Button>
+			{/if}
+		</div>
+		{#if mobileBpmOpen}
+			<div class="mt-3">
+				<Slider type="single" min={40} max={180} step={1} bind:value={bpmValue} />
+			</div>
+		{/if}
+	</div>
+</div>
+{/if}
+
+{#if phase === 'harmony'}
+	<div class="fixed inset-x-4 bottom-4 z-40 lg:hidden">
+		<div class="rounded-2xl border border-border/70 bg-card/95 px-4 py-3 shadow-xl backdrop-blur">
+			<div class="flex items-center justify-between gap-3">
+				<Button class="px-6" onclick={playHarmonyChord}>Play</Button>
+				<div class="flex items-center gap-2">
+					<span class="text-xs text-muted-foreground">Drone</span>
+					<Switch bind:checked={harmonyDroneOn} />
+				</div>
+				<Button variant="secondary" onclick={() => (harmonyQuizMode = !harmonyQuizMode)}>
+					{harmonyQuizMode ? 'Quiz on' : 'Quiz off'}
+				</Button>
+			</div>
+			<div class="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+				<span>Function key: {harmonyFunctionKeyLabel}</span>
+				<Button size="sm" variant="secondary" onclick={advanceHarmonyKey}>
+					Advance
+				</Button>
+			</div>
+		</div>
+	</div>
+{/if}
