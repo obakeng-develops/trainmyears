@@ -16,6 +16,9 @@ export type RhythmEngineConfig = {
 	pulseLevel: number;
 	subdivisionLevel: number;
 	groupingLevel: number;
+	mode?: 'standard' | 'floors';
+	floorSteps?: number;
+	layerSteps?: number;
 };
 
 type RhythmEngineCallbacks = {
@@ -110,11 +113,12 @@ export class RhythmEngine {
 		this.ctx ??= new AudioContext();
 		void this.ctx.resume();
 
-		const { bpm, totalSteps, countIn, countInBars } = this.config;
+		const { bpm, totalSteps, countIn, countInBars, mode, floorSteps } = this.config;
 		const intervalMs = (60_000 / bpm) | 0;
 
 		this.step = -1;
-		this.countInRemaining = countIn ? totalSteps * Math.max(countInBars, 1) : 0;
+		const countInSteps = mode === 'floors' && floorSteps ? floorSteps : totalSteps;
+		this.countInRemaining = countIn ? countInSteps * Math.max(countInBars, 1) : 0;
 		this.stage = this.countInRemaining > 0 ? 'count-in' : 'playing';
 		this.callbacks.onStageChange?.(this.stage);
 
@@ -135,23 +139,41 @@ export class RhythmEngine {
 
 	private tick() {
 		if (!this.ctx) return;
-		const { totalSteps, grouping, pulseLevel, subdivisionLevel, groupingLevel } = this.config;
+		const {
+			totalSteps,
+			grouping,
+			pulseLevel,
+			subdivisionLevel,
+			groupingLevel,
+			mode,
+			floorSteps,
+			layerSteps
+		} = this.config;
 		const groupStarts = getGroupStarts(grouping);
 		const isCountingIn = this.stage === 'count-in' && this.countInRemaining > 0;
+		const floorStride = mode === 'floors' && floorSteps ? totalSteps / floorSteps : null;
+		const layerStride = mode === 'floors' && layerSteps ? totalSteps / layerSteps : null;
 
 		if (isCountingIn) {
 			this.countInRemaining -= 1;
-			const countStep = (totalSteps - (this.countInRemaining % totalSteps)) % totalSteps;
+			const countInSteps = mode === 'floors' && floorSteps ? floorSteps : totalSteps;
+			const countStep = (countInSteps - (this.countInRemaining % countInSteps)) % countInSteps;
 			const isGroupStart = groupStarts.has(countStep);
 			const isBarStart = countStep === 0;
-			if (subdivisionLevel > 0) {
-				playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle');
-			}
-			if (groupingLevel > 0 && isGroupStart) {
-				playTone(this.ctx, 1200, 0.04, 0.35 * groupingLevel, 'square');
-			}
-			if (pulseLevel > 0 && isBarStart) {
-				playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
+			if (mode === 'floors' && floorSteps) {
+				if (pulseLevel > 0) {
+					playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
+				}
+			} else {
+				if (subdivisionLevel > 0) {
+					playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle');
+				}
+				if (groupingLevel > 0 && isGroupStart) {
+					playTone(this.ctx, 1200, 0.04, 0.35 * groupingLevel, 'square');
+				}
+				if (pulseLevel > 0 && isBarStart) {
+					playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
+				}
 			}
 			this.callbacks.onTick?.({
 				step: countStep,
@@ -170,14 +192,25 @@ export class RhythmEngine {
 		this.step = (this.step + 1) % totalSteps;
 		const isGroupStart = groupStarts.has(this.step);
 		const isBarStart = this.step === 0;
-		if (subdivisionLevel > 0) {
-			playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle');
-		}
-		if (groupingLevel > 0 && isGroupStart) {
-			playTone(this.ctx, 1200, 0.04, 0.35 * groupingLevel, 'square');
-		}
-		if (pulseLevel > 0 && isBarStart) {
-			playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
+		if (mode === 'floors' && floorStride && layerStride) {
+			const isFloorStep = this.step % floorStride === 0;
+			const isLayerStep = this.step % layerStride === 0;
+			if (subdivisionLevel > 0 && isLayerStep) {
+				playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle');
+			}
+			if (pulseLevel > 0 && isFloorStep) {
+				playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
+			}
+		} else {
+			if (subdivisionLevel > 0) {
+				playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle');
+			}
+			if (groupingLevel > 0 && isGroupStart) {
+				playTone(this.ctx, 1200, 0.04, 0.35 * groupingLevel, 'square');
+			}
+			if (pulseLevel > 0 && isBarStart) {
+				playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
+			}
 		}
 
 		this.callbacks.onTick?.({
