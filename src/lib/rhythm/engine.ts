@@ -108,6 +108,11 @@ export class RhythmEngine {
 		return this.stage;
 	}
 
+	async unlock() {
+		this.ctx ??= new AudioContext();
+		await this.ctx.resume();
+	}
+
 	start() {
 		if (this.timer) return;
 		this.ctx ??= new AudioContext();

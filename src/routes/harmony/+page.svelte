@@ -51,6 +51,7 @@
 	let repeatSeconds = $state(3);
 	let keepDroneOnStop = $state(true);
 	let timer: ReturnType<typeof setInterval> | null = null;
+	let audioReady = $state(false);
 
 	const engine = new HarmonyEngine();
 
@@ -64,17 +65,33 @@
 	const inversionLabel = $derived(inversion === 0 ? 'Root position' : inversion === 1 ? '1st inversion' : '2nd inversion');
 	const isListening = $derived(repeatOn || droneOn);
 
-	const playChord = () => {
+	const unlockAudio = async () => {
+		if (audioReady) return;
+		try {
+			await engine.unlock();
+			audioReady = true;
+		} catch {
+			audioReady = false;
+		}
+	};
+
+	const playChordInternal = () => {
 		const next = Math.floor(Math.random() * 3) as 0 | 1 | 2;
 		inversion = next;
 		engine.playChord({ rootPc, triad: derivedTriad, inversion: next });
 		if (quizMode) reveal = false;
 	};
 
+	const playChord = async () => {
+		await unlockAudio();
+		playChordInternal();
+	};
+
 	const startRepeat = () => {
 		if (timer) return;
-		playChord();
-		timer = setInterval(playChord, repeatSeconds * 1000);
+		if (!audioReady) return;
+		playChordInternal();
+		timer = setInterval(playChordInternal, repeatSeconds * 1000);
 	};
 
 	const stopRepeat = () => {
@@ -100,6 +117,7 @@
 		engine.setKeyPc(Number(key));
 		engine.setDroneVolume(droneVolume / 100);
 		engine.setDroneBlend(droneBlend / 100);
+		if (!audioReady) return;
 		if (droneOn) engine.startDrone();
 		else engine.stopDrone();
 	});
@@ -109,12 +127,13 @@
 	});
 
 	$effect(() => {
+		if (!audioReady) return;
 		if (repeatOn) startRepeat();
 		else stopRepeat();
 	});
 
 	$effect(() => {
-		if (!repeatOn) return;
+		if (!repeatOn || !audioReady) return;
 		stopRepeat();
 		startRepeat();
 	});
@@ -202,6 +221,11 @@
 					<Badge variant={isListening ? 'default' : 'secondary'} class="text-xs">
 						{isListening ? 'Listening' : 'Idle'}
 					</Badge>
+					{#if !audioReady}
+						<Button size="sm" variant="secondary" onclick={() => void unlockAudio()}>
+							Enable audio
+						</Button>
+					{/if}
 					<div class="relative">
 						{#if repeatOn}
 							<span
@@ -209,7 +233,7 @@
 								style={`animation: harmony-pulse ${repeatSeconds}s ease-out infinite;`}
 							></span>
 						{/if}
-						<Button onclick={playChord} class="relative px-5">Play now</Button>
+						<Button onclick={() => void playChord()} class="relative px-5">Play now</Button>
 					</div>
 					<Button variant="secondary" onclick={stopLoop}>
 						Stop loop
@@ -285,10 +309,13 @@
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
 					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Drone + Repeat</div>
-					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
-						<span class="text-xs text-muted-foreground">Drone</span>
-						<Switch bind:checked={droneOn} />
-					</div>
+				<div
+					class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+					onclick={() => void unlockAudio()}
+				>
+					<span class="text-xs text-muted-foreground">Drone</span>
+					<Switch bind:checked={droneOn} />
+				</div>
 					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
 						<span class="text-xs text-muted-foreground">Keep drone on stop loop</span>
 						<Switch bind:checked={keepDroneOnStop} />
@@ -307,10 +334,13 @@
 						</div>
 						<Slider type="single" min={2} max={5} step={1} bind:value={repeatSeconds} />
 					</div>
-					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
-						<span class="text-xs text-muted-foreground">Auto‑repeat</span>
-						<Switch bind:checked={repeatOn} />
-					</div>
+				<div
+					class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+					onclick={() => void unlockAudio()}
+				>
+					<span class="text-xs text-muted-foreground">Auto‑repeat</span>
+					<Switch bind:checked={repeatOn} />
+				</div>
 				</div>
 			</div>
 		</details>

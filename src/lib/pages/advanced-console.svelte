@@ -166,6 +166,8 @@ const floorSyllables: Record<number, string[]> = {
 	let harmonyDroneBlend = $state(40);
 	let harmonyQuizMode = $state(false);
 	let harmonyReveal = $state(false);
+	let rhythmAudioReady = $state(false);
+	let harmonyAudioReady = $state(false);
 
 	const engine = new RhythmEngine({
 		onTick: (tick: RhythmTick) => {
@@ -180,6 +182,26 @@ const floorSyllables: Record<number, string[]> = {
 
 	const harmonyEngine = new HarmonyEngine();
 
+	const unlockRhythmAudio = async () => {
+		if (rhythmAudioReady) return;
+		try {
+			await engine.unlock();
+			rhythmAudioReady = true;
+		} catch {
+			rhythmAudioReady = false;
+		}
+	};
+
+	const unlockHarmonyAudio = async () => {
+		if (harmonyAudioReady) return;
+		try {
+			await harmonyEngine.unlock();
+			harmonyAudioReady = true;
+		} catch {
+			harmonyAudioReady = false;
+		}
+	};
+
 	const stopPlayback = () => {
 		engine.stop();
 		isPlaying = false;
@@ -188,7 +210,8 @@ const floorSyllables: Record<number, string[]> = {
 		currentIsGroupStart = false;
 	};
 
-	const startPlayback = () => {
+	const startPlayback = async () => {
+		await unlockRhythmAudio();
 		engine.setConfig({
 			bpm: engineBpm,
 			grouping: floorsMode ? [engineSteps] : grouping.groups,
@@ -210,7 +233,7 @@ const floorSyllables: Record<number, string[]> = {
 		if (isPlaying) {
 			stopPlayback();
 		} else {
-			startPlayback();
+			void startPlayback();
 		}
 	};
 
@@ -603,6 +626,7 @@ const floorSyllables: Record<number, string[]> = {
 	});
 
 	$effect(() => {
+		if (!harmonyAudioReady) return;
 		if (harmonyDroneOn) {
 			harmonyEngine.startDrone();
 		} else {
@@ -643,7 +667,8 @@ const floorSyllables: Record<number, string[]> = {
 		harmonyFunctionKey = String(circleOfFifths[nextIndex]);
 	};
 
-	const playHarmonyChord = () => {
+	const playHarmonyChord = async () => {
+		await unlockHarmonyAudio();
 		const inversion = Math.floor(Math.random() * 3) as 0 | 1 | 2;
 		harmonyInversion = inversion;
 		harmonyEngine.playChord({
@@ -1474,12 +1499,15 @@ const floorSyllables: Record<number, string[]> = {
 						<div class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
 							Turn the drone on, then listen for how chords feel against it.
 						</div>
-						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+						<div
+							class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+							onclick={() => void unlockHarmonyAudio()}
+						>
 							<div>
 								<div class="text-sm font-semibold">Drone</div>
 								<div class="text-xs text-muted-foreground">Tonic + fifth blend.</div>
 							</div>
-							<Switch bind:checked={harmonyDroneOn} />
+										<Switch bind:checked={harmonyDroneOn} />
 						</div>
 						<div class="space-y-2">
 							<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1781,9 +1809,9 @@ const floorSyllables: Record<number, string[]> = {
 		<div class="rounded-2xl border border-border/70 bg-card/95 px-4 py-3 shadow-xl backdrop-blur">
 			<div class="flex items-center justify-between gap-3">
 				<Button class="px-6" onclick={playHarmonyChord}>Play</Button>
-				<div class="flex items-center gap-2">
+				<div class="flex items-center gap-2" onclick={() => void unlockHarmonyAudio()}>
 					<span class="text-xs text-muted-foreground">Drone</span>
-					<Switch bind:checked={harmonyDroneOn} />
+									<Switch bind:checked={harmonyDroneOn} />
 				</div>
 				<Button variant="secondary" onclick={() => (harmonyQuizMode = !harmonyQuizMode)}>
 					{harmonyQuizMode ? 'Quiz on' : 'Quiz off'}

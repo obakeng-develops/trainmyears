@@ -67,6 +67,7 @@
 	let lastConfigKey = $state('');
 	let totalBars = 8;
 	let pendingRestart = $state(false);
+	let audioReady = $state(false);
 
 	const engine = new RhythmEngine({
 		onTick: (tick: RhythmTick) => {
@@ -105,7 +106,18 @@
 		startPlayback();
 	};
 
-	const startPlayback = () => {
+	const unlockAudio = async () => {
+		if (audioReady) return;
+		try {
+			await engine.unlock();
+			audioReady = true;
+		} catch {
+			audioReady = false;
+		}
+	};
+
+	const startPlayback = async () => {
+		await unlockAudio();
 		barsRemaining = 8;
 		engine.setConfig({
 			bpm: bpmValue,
@@ -125,7 +137,7 @@
 		if (isPlaying) {
 			stopPlayback();
 		} else {
-			startPlayback();
+			void startPlayback();
 		}
 	};
 

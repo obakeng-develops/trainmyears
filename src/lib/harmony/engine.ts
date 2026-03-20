@@ -44,6 +44,12 @@ export class HarmonyEngine {
 		return this.ctx;
 	}
 
+	async unlock() {
+		this.ctx ??= new AudioContext();
+		await this.ctx.resume();
+		return this.ctx;
+	}
+
 	setKeyPc(pc: number) {
 		this.keyPc = pc % 12;
 		if (this.droneOscillators.length) {
