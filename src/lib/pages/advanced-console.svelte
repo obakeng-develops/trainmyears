@@ -824,6 +824,9 @@ const floorSyllables: Record<number, string[]> = {
 						Anchor the key with a drone, then train chord function and inversion awareness.
 					</p>
 				{/if}
+				<p class="text-xs text-muted-foreground">
+					iOS: Silent Mode mutes web audio. Flip the ring switch if you hear nothing.
+				</p>
 				{#if showPhaseToggle}
 					<ToggleGroup.Root type="single" bind:value={phase} class="mt-3 flex flex-wrap gap-2">
 						{#each phaseOptions as option}

@@ -345,6 +345,10 @@
 			</div>
 		</details>
 
+		<div class="text-xs text-muted-foreground">
+			iOS: Silent Mode mutes web audio. Flip the ring switch if you hear nothing.
+		</div>
+
 		<div class="text-sm text-muted-foreground">
 			Need full control? <a class="underline" href="/harmony/advanced">Open Harmony Advanced</a>.
 		</div>
