@@ -108,6 +108,7 @@
 	let practiceMode = $state<'phrase' | 'scale' | 'single'>('phrase');
 	let scaleMode = $state<(typeof SCALE_OPTIONS)[number]>('major');
 	let showScaleNames = $state(false);
+	let startOnTonic = $state(true);
 	let scaleChoices = $state<(typeof SCALE_OPTIONS)[number][]>([]);
 	let scaleCorrect = $state<(typeof SCALE_OPTIONS)[number] | ''>('');
 	let scaleFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
@@ -192,7 +193,7 @@
 		phraseLength ? Math.min(((currentStep + 1) / phraseLength) * 100, 100) : 0
 	);
 	const configKey = $derived(
-		`${practiceMode}-${scaleMode}-${mode}-${representation}-${key}-${keyMode}-${bpm}-${phraseLength}-${loopBars}-${maxLeap}-${autoAdvanceKey}-${droneOn}-${
+		`${practiceMode}-${scaleMode}-${mode}-${representation}-${key}-${keyMode}-${bpm}-${phraseLength}-${loopBars}-${maxLeap}-${autoAdvanceKey}-${droneOn}-${startOnTonic}-${
 			allowedDegrees.join(',')
 		}`
 	);
@@ -203,6 +204,11 @@
 		scale ? SCALE_LABELS[scale] : '';
 	const labelForScaleChoice = (scale: (typeof SCALE_OPTIONS)[number], index: number) =>
 		showScaleNames ? SCALE_LABELS[scale] : `Option ${index + 1}`;
+	const scaleFeelLabel = (scale: (typeof SCALE_OPTIONS)[number]) => {
+		if (scale === 'major' || scale === 'melodicMinor') return 'Bright';
+		if (scale === 'harmonicMinor') return 'Tense';
+		return 'Dark';
+	};
 
 	const shuffle = <T,>(items: T[]) => [...items].sort(() => Math.random() - 0.5);
 
@@ -273,7 +279,8 @@
 			loop: mode === 'passive',
 			countInBars: 1,
 			regenerateOnLoop: mode === 'passive',
-			allowedDegrees: allowed
+			allowedDegrees: allowed,
+			startOnTonic
 		} as Partial<MelodyEngineConfig>);
 		engine.generatePhrase();
 	};
@@ -353,10 +360,11 @@
 		if (raw) {
 			try {
 				const saved = JSON.parse(raw) as Partial<{
-					mode: (typeof modeOptions)[number];
-					practiceMode: 'phrase' | 'scale' | 'single';
-					scaleMode: (typeof SCALE_OPTIONS)[number];
-					showScaleNames: boolean;
+						mode: (typeof modeOptions)[number];
+						practiceMode: 'phrase' | 'scale' | 'single';
+						scaleMode: (typeof SCALE_OPTIONS)[number];
+						showScaleNames: boolean;
+						startOnTonic: boolean;
 					representation: (typeof representationOptions)[number];
 					key: string;
 					keyMode: 'major' | 'minor';
@@ -372,6 +380,7 @@
 				if (saved.practiceMode) practiceMode = saved.practiceMode;
 				if (saved.scaleMode) scaleMode = saved.scaleMode;
 				if (typeof saved.showScaleNames === 'boolean') showScaleNames = saved.showScaleNames;
+				if (typeof saved.startOnTonic === 'boolean') startOnTonic = saved.startOnTonic;
 				if (saved.representation) representation = saved.representation;
 				if (typeof saved.key === 'string') key = saved.key;
 				if (saved.keyMode) keyMode = saved.keyMode;
@@ -406,6 +415,7 @@
 				practiceMode,
 				scaleMode,
 				showScaleNames,
+				startOnTonic,
 				representation,
 				key,
 				keyMode,
@@ -652,7 +662,7 @@
 						<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
 							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
 							<div class="mt-2 text-sm">
-								Which scale color is this over the tonic drone?
+								Which scale color is this over the tonic drone? Think Bright / Dark / Tense.
 							</div>
 							<div class="mt-4 flex flex-wrap gap-2">
 								{#each scaleChoices as choice, index}
@@ -670,8 +680,8 @@
 									}`}
 								>
 									{scaleFeedback === 'correct'
-										? 'Correct. Listen for that color again.'
-										: 'Not quite. It was ' + labelForScale(scaleCorrect) + '.'}
+										? 'Correct. That feels ' + scaleFeelLabel(scaleCorrect as (typeof SCALE_OPTIONS)[number]) + '.'
+										: 'Not quite. It was ' + labelForScale(scaleCorrect) + ' (' + scaleFeelLabel(scaleCorrect as (typeof SCALE_OPTIONS)[number]) + ').'}
 								</div>
 							{/if}
 						</div>
@@ -681,7 +691,7 @@
 						<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
 							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
 							<div class="mt-2 text-sm">
-								Same pitch, new key. What is this note's function now?
+								Same pitch, new key. What does it feel like now? Think Bright / Dark / Tense.
 							</div>
 							<div class="mt-4 flex flex-wrap gap-2">
 								{#each singleChoices as choice}
@@ -772,6 +782,10 @@
 						<span class="text-foreground">{bpm}</span>
 					</div>
 					<Slider type="single" min={60} max={130} step={1} bind:value={bpm} />
+					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+						<span class="text-xs text-muted-foreground">Start on tonic</span>
+						<Switch bind:checked={startOnTonic} />
+					</div>
 					{#if practiceMode === 'scale'}
 						<div class="mt-3 space-y-2">
 							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scale</div>

@@ -110,6 +110,7 @@
 		'b7': 'Te',
 		'7': 'Ti'
 	};
+	const floorSequenceOptions = Array.from({ length: 16 }, (_, index) => index + 1);
 
 	type Role = (typeof roleOptions)[number];
 	type Phase = (typeof phaseOptions)[number];
@@ -235,6 +236,14 @@ const floorSyllables: Record<number, string[]> = {
 	let floorsMode = $state(false);
 	let floorDenom = $state('2');
 	let layerCount = $state('3');
+	let autoAdvanceFloors = $state(false);
+	let floorSequence = $state<number[]>([1, 2, 3, 4]);
+	let barsPerFloor = $state(4);
+	let floorSequenceIndex = $state(0);
+	let barsRemainingInFloor = $state(4);
+	let wrapFloors = $state(true);
+	let targetPlaybackBpm = $state(96);
+	let lastMatchPlaybackBpm = $state(false);
 	let harmonyKey = $state('0');
 	let harmonyFunctionKey = $state('0');
 	let harmonyKeyMode = $state<'major' | 'minor'>('major');
@@ -255,6 +264,7 @@ const floorSyllables: Record<number, string[]> = {
 	let melodyPracticeMode = $state<'phrase' | 'scale' | 'single'>('phrase');
 	let melodyScaleMode = $state<(typeof SCALE_OPTIONS)[number]>('major');
 	let melodyShowScaleNames = $state(false);
+	let melodyStartOnTonic = $state(true);
 	let melodyScaleChoices = $state<(typeof SCALE_OPTIONS)[number][]>([]);
 	let melodyScaleCorrect = $state<(typeof SCALE_OPTIONS)[number] | ''>('');
 	let melodyScaleFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
@@ -288,6 +298,32 @@ const floorSyllables: Record<number, string[]> = {
 			currentStep = tick.step;
 			currentIsGroupStart = tick.isGroupStart;
 			stage = tick.stage;
+			if (autoAdvanceFloors && floorsMode && tick.stage === 'playing' && tick.step === 0) {
+				barsRemainingInFloor = Math.max(0, barsRemainingInFloor - 1);
+				if (barsRemainingInFloor === 0 && floorSequence.length > 0) {
+					const nextIndex = floorSequenceIndex + 1;
+					if (nextIndex >= floorSequence.length) {
+										if (!wrapFloors) {
+											autoAdvanceFloors = false;
+											return;
+										}
+						floorSequenceIndex = 0;
+					} else {
+						floorSequenceIndex = nextIndex;
+					}
+					const nextFloor = floorSequence[floorSequenceIndex] ?? floorDenomNum;
+					floorDenom = String(nextFloor);
+					barsRemainingInFloor = barsPerFloor;
+					bpmValue = Math.max(
+						40,
+						Math.round(targetPlaybackBpm / (floorsLcm / Number(nextFloor)))
+					);
+					if (isPlaying) {
+						stopPlayback();
+						startPlayback();
+					}
+				}
+			}
 		},
 		onStageChange: (nextStage) => {
 			stage = nextStage;
@@ -328,7 +364,30 @@ const floorSyllables: Record<number, string[]> = {
 		scale ? SCALE_LABELS[scale] : '';
 	const labelForMelodyScaleChoice = (scale: (typeof SCALE_OPTIONS)[number], index: number) =>
 		melodyShowScaleNames ? SCALE_LABELS[scale] : `Option ${index + 1}`;
+	const melodyScaleFeel = (scale: (typeof SCALE_OPTIONS)[number]) => {
+		if (scale === 'major' || scale === 'melodicMinor') return 'Bright';
+		if (scale === 'harmonicMinor') return 'Tense';
+		return 'Dark';
+	};
 	const shuffle = <T,>(items: T[]) => [...items].sort(() => Math.random() - 0.5);
+
+	const toggleFloorInSequence = (value: number) => {
+		if (floorSequence.includes(value)) {
+			floorSequence = floorSequence.filter((item) => item !== value);
+			return;
+		}
+		floorSequence = [...floorSequence, value];
+	};
+
+	const moveFloorInSequence = (value: number, direction: -1 | 1) => {
+		const index = floorSequence.indexOf(value);
+		if (index < 0) return;
+		const nextIndex = index + direction;
+		if (nextIndex < 0 || nextIndex >= floorSequence.length) return;
+		const next = [...floorSequence];
+		[next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+		floorSequence = next;
+	};
 
 	const toggleMelodyDegree = (degree: string) => {
 		if (melodyAllowedDegrees.includes(degree)) {
@@ -390,6 +449,10 @@ const floorSyllables: Record<number, string[]> = {
 
 	const startPlayback = async () => {
 		await unlockRhythmAudio();
+		if (autoAdvanceFloors && floorsMode) {
+			targetPlaybackBpm = engineBpm;
+			barsRemainingInFloor = barsPerFloor;
+		}
 		engine.setConfig({
 			bpm: engineBpm,
 			grouping: floorsMode ? [engineSteps] : grouping.groups,
@@ -610,7 +673,9 @@ const floorSyllables: Record<number, string[]> = {
 	);
 	const playheadLeft = $derived(`${(currentStep / Math.max(engineSteps, 1)) * 100}%`);
 	const configKey = $derived(
-		`${bpmValue}-${matchPlaybackBpm}-${meter}-${patternId}-${groupingId}-${countIn}-${pulseMix}-${subdivisionMix}-${groupAccentMode}-${learnMode}-${learnStep}-${floorsMode}-${floorDenom}-${layerCount}`
+		`${bpmValue}-${matchPlaybackBpm}-${meter}-${patternId}-${groupingId}-${countIn}-${pulseMix}-${subdivisionMix}-${groupAccentMode}-${learnMode}-${learnStep}-${floorsMode}-${floorDenom}-${layerCount}-${autoAdvanceFloors}-${barsPerFloor}-${wrapFloors}-${
+			floorSequence.join(',')
+		}`
 	);
 	const gridLabel = $derived(
 		floorsMode
@@ -620,6 +685,11 @@ const floorSyllables: Record<number, string[]> = {
 	const bpmLabel = $derived(
 		floorsMode ? (matchPlaybackBpm ? 'Playback BPM' : 'Floor BPM') : 'Pulse BPM'
 	);
+	const nextFloorLabel = $derived(() => {
+		if (!autoAdvanceFloors || floorSequence.length < 2) return null;
+		const nextIndex = (floorSequenceIndex + 1) % floorSequence.length;
+		return floorSequence[nextIndex] ?? null;
+	});
 	const laneLabels = $derived(
 		floorsMode
 			? { foot: `Floor`, clap: `Layer`, voice: `Konnakol` }
@@ -776,7 +846,7 @@ const floorSyllables: Record<number, string[]> = {
 			: 0
 	);
 	const melodySettingsKey = $derived(
-		`${melodyPracticeMode}-${melodyScaleMode}-${melodyMode}-${melodyRepresentation}-${melodyKey}-${melodyKeyMode}-${melodyBpm}-${melodyPhraseLength}-${melodyLoopBars}-${melodyMaxLeap}-${melodyAutoAdvanceKey}-${melodyDroneOn}-${
+		`${melodyPracticeMode}-${melodyScaleMode}-${melodyMode}-${melodyRepresentation}-${melodyKey}-${melodyKeyMode}-${melodyBpm}-${melodyPhraseLength}-${melodyLoopBars}-${melodyMaxLeap}-${melodyAutoAdvanceKey}-${melodyDroneOn}-${melodyStartOnTonic}-${
 			melodyAllowedDegrees.join(',')
 		}`
 	);
@@ -845,6 +915,46 @@ const floorSyllables: Record<number, string[]> = {
 			startPlayback();
 		}
 		lastConfigKey = configKey;
+	});
+
+	$effect(() => {
+		if (!autoAdvanceFloors) return;
+		if (!floorsMode) return;
+		if (floorSequence.length === 0) {
+			floorSequence = [floorDenomNum];
+		}
+		const sequence = floorSequence.length ? floorSequence : [floorDenomNum];
+		const currentIndex = sequence.indexOf(floorDenomNum);
+		if (currentIndex === -1) {
+			floorSequenceIndex = 0;
+			floorDenom = String(sequence[0]);
+		} else {
+			floorSequenceIndex = currentIndex;
+		}
+		barsRemainingInFloor = barsPerFloor;
+		if (isPlaying) {
+			targetPlaybackBpm = engineBpm;
+		}
+	});
+
+	$effect(() => {
+		if (!floorsMode) return;
+		if (!matchPlaybackBpm) return;
+		if (!autoAdvanceFloors) return;
+		if (!isPlaying) return;
+		targetPlaybackBpm = engineBpm;
+	});
+
+	$effect(() => {
+		if (!floorsMode) {
+			lastMatchPlaybackBpm = matchPlaybackBpm;
+			return;
+		}
+		if (matchPlaybackBpm && !lastMatchPlaybackBpm) {
+			targetPlaybackBpm = engineBpm;
+			bpmValue = Math.round(engineBpm);
+		}
+		lastMatchPlaybackBpm = matchPlaybackBpm;
 	});
 
 	$effect(() => {
@@ -990,7 +1100,8 @@ const floorSyllables: Record<number, string[]> = {
 			loop: melodyMode === 'passive',
 			countInBars: 1,
 			regenerateOnLoop: melodyMode === 'passive',
-			allowedDegrees: allowed
+			allowedDegrees: allowed,
+			startOnTonic: melodyStartOnTonic
 		} as Partial<MelodyEngineConfig>);
 		melodyEngine.generatePhrase();
 	};
@@ -1079,6 +1190,11 @@ const floorSyllables: Record<number, string[]> = {
 						floorsMode: boolean;
 						floorDenom: string;
 						layerCount: string;
+						autoAdvanceFloors: boolean;
+						floorSequence: number[];
+						barsPerFloor: number;
+						wrapFloors: boolean;
+						targetPlaybackBpm: number;
 						harmonyKey: string;
 						harmonyFunctionKey: string;
 						harmonyKeyMode: 'major' | 'minor';
@@ -1096,8 +1212,8 @@ const floorSyllables: Record<number, string[]> = {
 						melodyMode: 'interactive' | 'passive';
 						melodyPracticeMode: 'phrase' | 'scale' | 'single';
 						melodyScaleMode: (typeof SCALE_OPTIONS)[number];
-										melodyShowScaleNames: boolean;
-										matchPlaybackBpm: boolean;
+						melodyShowScaleNames: boolean;
+						melodyStartOnTonic: boolean;
 						melodyRepresentation: 'solfege' | 'numbers';
 						melodyKey: string;
 						melodyKeyMode: 'major' | 'minor';
@@ -1127,6 +1243,13 @@ const floorSyllables: Record<number, string[]> = {
 					if (typeof saved.floorsMode === 'boolean') floorsMode = saved.floorsMode;
 					if (typeof saved.floorDenom === 'string') floorDenom = saved.floorDenom;
 					if (typeof saved.layerCount === 'string') layerCount = saved.layerCount;
+					if (typeof saved.autoAdvanceFloors === 'boolean')
+						autoAdvanceFloors = saved.autoAdvanceFloors;
+					if (Array.isArray(saved.floorSequence)) floorSequence = saved.floorSequence;
+					if (typeof saved.barsPerFloor === 'number') barsPerFloor = saved.barsPerFloor;
+					if (typeof saved.wrapFloors === 'boolean') wrapFloors = saved.wrapFloors;
+					if (typeof saved.targetPlaybackBpm === 'number')
+						targetPlaybackBpm = saved.targetPlaybackBpm;
 					if (typeof saved.harmonyKey === 'string') harmonyKey = saved.harmonyKey;
 					if (typeof saved.harmonyFunctionKey === 'string')
 						harmonyFunctionKey = saved.harmonyFunctionKey;
@@ -1152,6 +1275,8 @@ const floorSyllables: Record<number, string[]> = {
 					if (saved.melodyScaleMode) melodyScaleMode = saved.melodyScaleMode;
 					if (typeof saved.melodyShowScaleNames === 'boolean')
 						melodyShowScaleNames = saved.melodyShowScaleNames;
+					if (typeof saved.melodyStartOnTonic === 'boolean')
+						melodyStartOnTonic = saved.melodyStartOnTonic;
 					if (saved.melodyRepresentation) melodyRepresentation = saved.melodyRepresentation;
 					if (typeof saved.melodyKey === 'string') melodyKey = saved.melodyKey;
 					if (saved.melodyKeyMode) melodyKeyMode = saved.melodyKeyMode;
@@ -1192,20 +1317,25 @@ const floorSyllables: Record<number, string[]> = {
 				phase,
 				role,
 					bpm: bpmValue,
-										matchPlaybackBpm,
-				meterValue,
-				patternId,
-				groupingId,
-				countIn,
-				learnMode,
-				learnStep,
-				learnSkipped,
-				pulseMix,
-				subdivisionMix,
-				groupAccentMode,
-				floorsMode,
-				floorDenom,
-				layerCount,
+					matchPlaybackBpm,
+					meterValue,
+					patternId,
+					groupingId,
+					countIn,
+					learnMode,
+					learnStep,
+					learnSkipped,
+					pulseMix,
+					subdivisionMix,
+					groupAccentMode,
+					floorsMode,
+					floorDenom,
+					layerCount,
+					autoAdvanceFloors,
+					floorSequence,
+					barsPerFloor,
+					wrapFloors,
+					targetPlaybackBpm,
 				harmonyKey,
 				harmonyFunctionKey,
 				harmonyKeyMode,
@@ -1224,6 +1354,7 @@ const floorSyllables: Record<number, string[]> = {
 					melodyPracticeMode,
 					melodyScaleMode,
 					melodyShowScaleNames,
+					melodyStartOnTonic,
 					melodyRepresentation,
 				melodyKey,
 				melodyKeyMode,
@@ -1359,7 +1490,7 @@ const floorSyllables: Record<number, string[]> = {
 					<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
 						<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
 							Pulse & Meter
-							<span class="text-xs text-muted-foreground">{bpmValue} bpm · {meter}</span>
+							<span class="text-xs text-muted-foreground">{Math.round(engineBpm)} bpm · {meter}</span>
 						</summary>
 						<div class="mt-4 space-y-4">
 							<div class="space-y-2">
@@ -1450,6 +1581,74 @@ const floorSyllables: Record<number, string[]> = {
 										{/each}
 									</ToggleGroup.Root>
 								</div>
+								<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+									<div>
+										<div class="text-sm font-semibold">Auto‑advance floors</div>
+										<div class="text-xs text-muted-foreground">
+											Move through your custom floor sequence.
+										</div>
+									</div>
+									<Switch bind:checked={autoAdvanceFloors} />
+								</div>
+								{#if autoAdvanceFloors}
+									<div class="space-y-2">
+										<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+											Sequence (1/denom)
+										</div>
+										<div class="grid grid-cols-8 gap-2">
+											{#each floorSequenceOptions as value}
+												<Button
+													variant={floorSequence.includes(value) ? 'default' : 'secondary'}
+													onclick={() => toggleFloorInSequence(value)}
+												>
+													1/{value}
+												</Button>
+											{/each}
+										</div>
+										{#if floorSequence.length}
+											<div class="flex flex-wrap gap-2 text-xs">
+												{#each floorSequence as value}
+													<div class="flex items-center gap-1 rounded-full border border-border/70 bg-background/60 px-2 py-1">
+														<span>1/{value}</span>
+														<Button
+															size="icon"
+															variant="ghost"
+															onclick={() => moveFloorInSequence(value, -1)}
+														>
+															←
+														</Button>
+														<Button
+															size="icon"
+															variant="ghost"
+															onclick={() => moveFloorInSequence(value, 1)}
+														>
+															→
+														</Button>
+													</div>
+												{/each}
+											</div>
+										{/if}
+									</div>
+									<div class="space-y-2">
+										<div class="flex items-center justify-between text-xs text-muted-foreground">
+											<span>Bars per floor</span>
+											<span class="text-foreground">{barsPerFloor}</span>
+										</div>
+										<Slider type="single" min={2} max={16} step={1} bind:value={barsPerFloor} />
+									</div>
+									<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+										<span class="text-xs text-muted-foreground">Wrap sequence</span>
+										<Switch bind:checked={wrapFloors} />
+									</div>
+									<div class="text-xs text-muted-foreground">
+										Now: 1/{floorDenom}
+										{#if nextFloorLabel}
+											<span class="ml-2">
+												Next: 1/{nextFloorLabel} in {barsRemainingInFloor} bars
+											</span>
+										{/if}
+									</div>
+								{/if}
 							{/if}
 						</div>
 					</details>
@@ -2329,6 +2528,10 @@ const floorSyllables: Record<number, string[]> = {
 							</div>
 							<Slider type="single" min={60} max={130} step={1} bind:value={melodyBpm} />
 						</div>
+						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<span class="text-xs text-muted-foreground">Start on tonic</span>
+							<Switch bind:checked={melodyStartOnTonic} />
+						</div>
 						{#if melodyPracticeMode === 'scale'}
 							<div class="space-y-2">
 								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scale</div>
@@ -2572,7 +2775,9 @@ const floorSyllables: Record<number, string[]> = {
 							<div class="space-y-4">
 								<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
 									<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
-									<div class="mt-2 text-sm">Which scale color is this over the tonic drone?</div>
+									<div class="mt-2 text-sm">
+										Which scale color is this over the tonic drone? Think Bright / Dark / Tense.
+									</div>
 									<div class="mt-4 flex flex-wrap gap-2">
 									{#each melodyScaleChoices as choice, index}
 										<Button variant="secondary" onclick={() => submitMelodyScale(choice)}>
@@ -2588,9 +2793,9 @@ const floorSyllables: Record<number, string[]> = {
 													: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
 											}`}
 										>
-											{melodyScaleFeedback === 'correct'
-												? 'Correct. Listen for that color again.'
-												: 'Not quite. It was ' + labelForMelodyScale(melodyScaleCorrect) + '.'}
+									{melodyScaleFeedback === 'correct'
+										? 'Correct. That feels ' + melodyScaleFeel(melodyScaleCorrect as (typeof SCALE_OPTIONS)[number]) + '.'
+										: 'Not quite. It was ' + labelForMelodyScale(melodyScaleCorrect) + ' (' + melodyScaleFeel(melodyScaleCorrect as (typeof SCALE_OPTIONS)[number]) + ').'}
 										</div>
 									{/if}
 								</div>
@@ -2599,7 +2804,9 @@ const floorSyllables: Record<number, string[]> = {
 							<div class="space-y-4">
 								<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
 									<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
-									<div class="mt-2 text-sm">Same pitch, new key. What is this note's function now?</div>
+									<div class="mt-2 text-sm">
+										Same pitch, new key. What does it feel like now? Think Bright / Dark / Tense.
+									</div>
 									<div class="mt-4 flex flex-wrap gap-2">
 										{#each melodySingleChoices as choice}
 											<Button variant="secondary" onclick={() => submitMelodySingle(choice)}>

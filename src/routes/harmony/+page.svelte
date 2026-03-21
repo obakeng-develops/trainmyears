@@ -56,6 +56,7 @@
 	let contextQuality = $state<ChordQuality>('major');
 	let contextFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
 	let contextCorrect = $state<'Settled' | 'Tilted' | 'Pulling'>('Settled');
+	let actionMenu = $state('');
 	let droneOn = $state(true);
 	let droneVolume = $state(35);
 	let droneBlend = $state(40);
@@ -269,6 +270,18 @@
 	});
 
 	$effect(() => {
+		if (actionMenu === 'stop-loop') {
+			stopLoop();
+			actionMenu = '';
+			return;
+		}
+		if (actionMenu === 'stop-all') {
+			stopAll();
+			actionMenu = '';
+		}
+	});
+
+	$effect(() => {
 		if (!repeatOn || !audioReady) return;
 		stopRepeat();
 		startRepeat();
@@ -391,14 +404,17 @@
 							{trainingMode === 'trainer' ? 'Play set' : 'Play now'}
 						</Button>
 					</div>
-					{#if trainingMode === 'loop'}
-						<Button variant="secondary" onclick={stopLoop}>
-							Stop loop
-						</Button>
-					{/if}
-					<Button variant="ghost" onclick={stopAll}>
-						Stop all
-					</Button>
+					<Select.Root type="single" bind:value={actionMenu as never}>
+						<Select.Trigger class="h-9 w-[120px]">
+							<span>Actions</span>
+						</Select.Trigger>
+						<Select.Content>
+							{#if trainingMode === 'loop'}
+								<Select.Item value="stop-loop">Stop loop</Select.Item>
+							{/if}
+							<Select.Item value="stop-all">Stop all</Select.Item>
+						</Select.Content>
+					</Select.Root>
 				</div>
 			</Card.Header>
 			<Card.Content class="space-y-6">

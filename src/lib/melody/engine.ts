@@ -21,6 +21,7 @@ export type MelodyEngineConfig = {
 	rangeOctaves: number;
 	regenerateOnLoop: boolean;
 	allowedDegrees: string[];
+	startOnTonic: boolean;
 };
 
 export type MelodyPhraseNote = {
@@ -46,7 +47,8 @@ const DEFAULT_CONFIG: MelodyEngineConfig = {
 	maxLeap: 2,
 	rangeOctaves: 1,
 	regenerateOnLoop: true,
-	allowedDegrees: ['1', '2', '3', '4', '5', '6', '7']
+	allowedDegrees: ['1', '2', '3', '4', '5', '6', '7'],
+	startOnTonic: true
 };
 
 const FULL_DEGREES = [
@@ -111,6 +113,7 @@ export class MelodyEngine {
 	private phrase: MelodyPhraseNote[] = [];
 	private stage: MelodyStage = 'idle';
 	private lastStage: MelodyStage = 'idle';
+	private lastStartDegree: string | null = null;
 
 	constructor(callbacks: MelodyEngineCallbacks = {}) {
 		this.callbacks = callbacks;
@@ -234,11 +237,13 @@ export class MelodyEngine {
 	}
 
 	generatePhrase() {
-		const { phraseLength, maxLeap, mode } = this.config;
+		const { phraseLength, maxLeap, mode, startOnTonic } = this.config;
 		const allowedDegrees = this.getAllowedDegrees(mode);
 		if (!allowedDegrees.length) return this.phrase;
 		const phrase: MelodyPhraseNote[] = [];
-		let lastDegree = allowedDegrees.includes('1') ? '1' : allowedDegrees[0];
+		let lastDegree = startOnTonic && allowedDegrees.includes('1')
+			? '1'
+			: this.pickStartDegree(allowedDegrees);
 		let lastBase = this.degreeBase(lastDegree);
 		let lastMidi: number | null = null;
 		for (let i = 0; i < phraseLength; i += 1) {
@@ -388,6 +393,24 @@ export class MelodyEngine {
 			return Math.abs(base - lastBase) <= maxLeap;
 		});
 		return candidates[Math.floor(Math.random() * candidates.length)] ?? fallback;
+	}
+
+	private pickStartDegree(allowed: string[]) {
+		const weighted = allowed.flatMap((degree) => {
+			const base = this.degreeBase(degree);
+			const weight = base === 1 || base === 3 || base === 5 ? 3 : 1;
+			return Array.from({ length: weight }, () => degree);
+		});
+		let next = weighted[Math.floor(Math.random() * weighted.length)] ?? allowed[0];
+		if (this.lastStartDegree && allowed.length > 1) {
+			let safety = 0;
+			while (next === this.lastStartDegree && safety < 6) {
+				next = weighted[Math.floor(Math.random() * weighted.length)] ?? allowed[0];
+				safety += 1;
+			}
+		}
+		this.lastStartDegree = next;
+		return next;
 	}
 
 	private degreeToMidi(degree: string, lastMidi?: number) {
