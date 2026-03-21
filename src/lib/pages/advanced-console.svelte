@@ -211,6 +211,7 @@ const floorSyllables: Record<number, string[]> = {
 	let role = $state<Role>('instrumentalist');
 	let phase = $state<Phase>(initialPhase);
 	let bpmValue = $state(96);
+	let matchPlaybackBpm = $state(false);
 	let meterValue = $state('4');
 	let patternId = $state(patternBank[4][0].id);
 	let groupingId = $state(groupingPresets[4][0].id);
@@ -585,8 +586,12 @@ const floorSyllables: Record<number, string[]> = {
 		floorsMode ? floorSyllables[layerCountNum] ?? floorSyllables[1] : currentPattern.syllables
 	);
 	const engineSteps = $derived(floorsMode ? floorsLcm : activeSyllables.length);
+	const playbackMultiplier = $derived(floorsLcm / floorDenomNum);
+	const baseBpm = $derived(
+		floorsMode && matchPlaybackBpm ? bpmValue / playbackMultiplier : bpmValue
+	);
 	const engineBpm = $derived(
-		floorsMode ? bpmValue * (floorsLcm / floorDenomNum) : bpmValue
+		floorsMode ? baseBpm * playbackMultiplier : baseBpm
 	);
 	const displaySteps = $derived(floorsMode ? layerCountNum : activeSyllables.length);
 	const stepIndices = $derived(Array.from({ length: displaySteps }, (_, index) => index));
@@ -605,14 +610,16 @@ const floorSyllables: Record<number, string[]> = {
 	);
 	const playheadLeft = $derived(`${(currentStep / Math.max(engineSteps, 1)) * 100}%`);
 	const configKey = $derived(
-		`${bpmValue}-${meter}-${patternId}-${groupingId}-${countIn}-${pulseMix}-${subdivisionMix}-${groupAccentMode}-${learnMode}-${learnStep}-${floorsMode}-${floorDenom}-${layerCount}`
+		`${bpmValue}-${matchPlaybackBpm}-${meter}-${patternId}-${groupingId}-${countIn}-${pulseMix}-${subdivisionMix}-${groupAccentMode}-${learnMode}-${learnStep}-${floorsMode}-${floorDenom}-${layerCount}`
 	);
 	const gridLabel = $derived(
 		floorsMode
 			? `Floor 1/${floorDenom} · Layer ${layerCount}/${floorDenom}`
 			: `${meter} steps · ${grouping.label} · ${roleLabels[role]}`
 	);
-	const bpmLabel = $derived(floorsMode ? 'Floor BPM' : 'Pulse BPM');
+	const bpmLabel = $derived(
+		floorsMode ? (matchPlaybackBpm ? 'Playback BPM' : 'Floor BPM') : 'Pulse BPM'
+	);
 	const laneLabels = $derived(
 		floorsMode
 			? { foot: `Floor`, clap: `Layer`, voice: `Konnakol` }
@@ -1058,6 +1065,7 @@ const floorSyllables: Record<number, string[]> = {
 						phase: Phase;
 						role: Role;
 						bpm: number;
+						matchPlaybackBpm: boolean;
 						meterValue: string;
 						patternId: string;
 						groupingId: string;
@@ -1088,7 +1096,8 @@ const floorSyllables: Record<number, string[]> = {
 						melodyMode: 'interactive' | 'passive';
 						melodyPracticeMode: 'phrase' | 'scale' | 'single';
 						melodyScaleMode: (typeof SCALE_OPTIONS)[number];
-						melodyShowScaleNames: boolean;
+										melodyShowScaleNames: boolean;
+										matchPlaybackBpm: boolean;
 						melodyRepresentation: 'solfege' | 'numbers';
 						melodyKey: string;
 						melodyKeyMode: 'major' | 'minor';
@@ -1102,7 +1111,9 @@ const floorSyllables: Record<number, string[]> = {
 					}>;
 			if (showPhaseToggle && saved.phase && phaseOptions.includes(saved.phase)) phase = saved.phase;
 				if (saved.role && roleOptions.includes(saved.role)) role = saved.role;
-				if (typeof saved.bpm === 'number') bpmValue = saved.bpm;
+					if (typeof saved.bpm === 'number') bpmValue = saved.bpm;
+										if (typeof saved.matchPlaybackBpm === 'boolean')
+											matchPlaybackBpm = saved.matchPlaybackBpm;
 				if (typeof saved.meterValue === 'string') meterValue = saved.meterValue;
 				if (typeof saved.patternId === 'string') patternId = saved.patternId;
 				if (typeof saved.groupingId === 'string') groupingId = saved.groupingId;
@@ -1180,7 +1191,8 @@ const floorSyllables: Record<number, string[]> = {
 			JSON.stringify({
 				phase,
 				role,
-				bpm: bpmValue,
+					bpm: bpmValue,
+										matchPlaybackBpm,
 				meterValue,
 				patternId,
 				groupingId,
@@ -1353,10 +1365,29 @@ const floorSyllables: Record<number, string[]> = {
 							<div class="space-y-2">
 								<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 									<span>{bpmLabel}</span>
-									<span class="text-foreground">{bpmValue}</span>
-								</div>
-								<Slider type="single" min={40} max={180} step={1} bind:value={bpmValue} />
+								<span class="text-foreground">{Math.round(engineBpm)}</span>
 							</div>
+							<Slider type="single" min={40} max={180} step={1} bind:value={bpmValue} />
+							<div class="mt-2 text-xs text-muted-foreground">
+								Playback BPM: {Math.round(engineBpm)}
+								{#if floorsMode}
+									<span class="ml-2">
+										= {Math.round(baseBpm)} × {playbackMultiplier.toFixed(2)}
+									</span>
+								{/if}
+							</div>
+						</div>
+						{#if floorsMode}
+							<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+								<div>
+									<div class="text-sm font-semibold">Match playback BPM</div>
+									<div class="text-xs text-muted-foreground">
+										Slider controls actual playback tempo.
+									</div>
+								</div>
+								<Switch bind:checked={matchPlaybackBpm} />
+							</div>
+						{/if}
 							<div class="hidden lg:block">
 								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 									Meter
@@ -1543,10 +1574,29 @@ const floorSyllables: Record<number, string[]> = {
 							<div class="space-y-2">
 								<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 									<span>{bpmLabel}</span>
-									<span class="text-foreground">{bpmValue}</span>
-								</div>
-								<Slider type="single" min={40} max={180} step={1} bind:value={bpmValue} />
+								<span class="text-foreground">{Math.round(engineBpm)}</span>
 							</div>
+							<Slider type="single" min={40} max={180} step={1} bind:value={bpmValue} />
+							<div class="mt-2 text-xs text-muted-foreground">
+								Playback BPM: {Math.round(engineBpm)}
+								{#if floorsMode}
+									<span class="ml-2">
+										= {Math.round(baseBpm)} × {playbackMultiplier.toFixed(2)}
+									</span>
+								{/if}
+							</div>
+						</div>
+						{#if floorsMode}
+							<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+								<div>
+									<div class="text-sm font-semibold">Match playback BPM</div>
+									<div class="text-xs text-muted-foreground">
+										Slider controls actual playback tempo.
+									</div>
+								</div>
+								<Switch bind:checked={matchPlaybackBpm} />
+							</div>
+						{/if}
 							<div class="space-y-2">
 								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 									Meter
