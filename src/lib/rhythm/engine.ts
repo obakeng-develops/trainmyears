@@ -45,24 +45,24 @@ const playTone = (
 	frequency: number,
 	duration: number,
 	volume: number,
-	type: OscillatorType = 'sine'
+	type: OscillatorType = 'sine',
+	startAt: number = ctx.currentTime
 ) => {
 	const oscillator = ctx.createOscillator();
 	const gain = ctx.createGain();
-	const now = ctx.currentTime;
 
 	oscillator.type = type;
-	oscillator.frequency.setValueAtTime(frequency, now);
+	oscillator.frequency.setValueAtTime(frequency, startAt);
 
-	gain.gain.setValueAtTime(0, now);
-	gain.gain.linearRampToValueAtTime(volume, now + 0.005);
-	gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+	gain.gain.setValueAtTime(0, startAt);
+	gain.gain.linearRampToValueAtTime(volume, startAt + 0.005);
+	gain.gain.exponentialRampToValueAtTime(0.0001, startAt + duration);
 
 	oscillator.connect(gain);
 	gain.connect(ctx.destination);
 
-	oscillator.start(now);
-	oscillator.stop(now + duration + 0.02);
+	oscillator.start(startAt);
+	oscillator.stop(startAt + duration + 0.02);
 };
 
 const getGroupStarts = (grouping: number[]) => {
@@ -81,12 +81,16 @@ const getGroupStarts = (grouping: number[]) => {
 
 export class RhythmEngine {
 	private ctx: AudioContext | null = null;
-	private timer: ReturnType<typeof setInterval> | null = null;
+	private schedulerTimer: ReturnType<typeof setInterval> | null = null;
+	private rafId: number | null = null;
 	private config: RhythmEngineConfig = { ...DEFAULT_CONFIG };
 	private callbacks: RhythmEngineCallbacks;
 	private stage: RhythmStage = 'idle';
-	private step = -1;
-	private countInRemaining = 0;
+	private lastStage: RhythmStage = 'idle';
+	private startTime = 0;
+	private nextNoteTime = 0;
+	private nextBeatNumber = 0;
+	private lastUiBeat = -1;
 
 	constructor(callbacks: RhythmEngineCallbacks = {}) {
 		this.callbacks = callbacks;
@@ -114,35 +118,59 @@ export class RhythmEngine {
 	}
 
 	start() {
-		if (this.timer) return;
+		if (this.schedulerTimer) return;
 		this.ctx ??= new AudioContext();
 		void this.ctx.resume();
 
 		const { bpm, totalSteps, countIn, countInBars, mode, floorSteps } = this.config;
-		const intervalMs = (60_000 / bpm) | 0;
-
-		this.step = -1;
+		const intervalSec = 60 / bpm;
 		const countInSteps = mode === 'floors' && floorSteps ? floorSteps : totalSteps;
-		this.countInRemaining = countIn ? countInSteps * Math.max(countInBars, 1) : 0;
-		this.stage = this.countInRemaining > 0 ? 'count-in' : 'playing';
+		const countInTotal = countIn ? countInSteps * Math.max(countInBars, 1) : 0;
+
+		this.stage = countInTotal > 0 ? 'count-in' : 'playing';
+		this.lastStage = this.stage;
 		this.callbacks.onStageChange?.(this.stage);
 
-		this.timer = setInterval(() => this.tick(), intervalMs);
-		this.tick();
+		this.startTime = this.ctx.currentTime + 0.05;
+		this.nextNoteTime = this.startTime;
+		this.nextBeatNumber = 0;
+		this.lastUiBeat = -1;
+
+		this.schedulerTimer = setInterval(() => this.scheduleNotes(), 25);
+		this.scheduleNotes();
+		this.rafId = requestAnimationFrame(() => this.updateUi());
 	}
 
 	stop() {
-		if (this.timer) {
-			clearInterval(this.timer);
-			this.timer = null;
+		if (this.schedulerTimer) {
+			clearInterval(this.schedulerTimer);
+			this.schedulerTimer = null;
+		}
+		if (this.rafId) {
+			cancelAnimationFrame(this.rafId);
+			this.rafId = null;
 		}
 		this.stage = 'idle';
+		this.lastStage = 'idle';
 		this.callbacks.onStageChange?.(this.stage);
-		this.step = -1;
-		this.countInRemaining = 0;
+		this.nextBeatNumber = 0;
+		this.lastUiBeat = -1;
 	}
 
-	private tick() {
+	private scheduleNotes() {
+		if (!this.ctx) return;
+		const { bpm } = this.config;
+		const intervalSec = 60 / bpm;
+		const currentTime = this.ctx.currentTime;
+		const scheduleAhead = 0.12;
+		while (this.nextNoteTime < currentTime + scheduleAhead) {
+			this.scheduleBeat(this.nextBeatNumber, this.nextNoteTime);
+			this.nextNoteTime += intervalSec;
+			this.nextBeatNumber += 1;
+		}
+	}
+
+	private scheduleBeat(beatNumber: number, time: number) {
 		if (!this.ctx) return;
 		const {
 			totalSteps,
@@ -152,77 +180,96 @@ export class RhythmEngine {
 			groupingLevel,
 			mode,
 			floorSteps,
-			layerSteps
+			layerSteps,
+			countIn,
+			countInBars
 		} = this.config;
+		const countInSteps = mode === 'floors' && floorSteps ? floorSteps : totalSteps;
+		const countInTotal = countIn ? countInSteps * Math.max(countInBars, 1) : 0;
+		const inCountIn = beatNumber < countInTotal;
 		const groupStarts = getGroupStarts(grouping);
-		const isCountingIn = this.stage === 'count-in' && this.countInRemaining > 0;
 		const floorStride = mode === 'floors' && floorSteps ? totalSteps / floorSteps : null;
 		const layerStride = mode === 'floors' && layerSteps ? totalSteps / layerSteps : null;
+		const step = inCountIn
+			? beatNumber % countInSteps
+			: (beatNumber - countInTotal) % totalSteps;
+		const isGroupStart = groupStarts.has(step);
+		const isBarStart = step === 0;
 
-		if (isCountingIn) {
-			this.countInRemaining -= 1;
-			const countInSteps = mode === 'floors' && floorSteps ? floorSteps : totalSteps;
-			const countStep = (countInSteps - (this.countInRemaining % countInSteps)) % countInSteps;
-			const isGroupStart = groupStarts.has(countStep);
-			const isBarStart = countStep === 0;
+		if (inCountIn) {
 			if (mode === 'floors' && floorSteps) {
 				if (pulseLevel > 0) {
-					playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
+					playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine', time);
 				}
-			} else {
-				if (subdivisionLevel > 0) {
-					playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle');
-				}
-				if (groupingLevel > 0 && isGroupStart) {
-					playTone(this.ctx, 1200, 0.04, 0.35 * groupingLevel, 'square');
-				}
-				if (pulseLevel > 0 && isBarStart) {
-					playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
-				}
+				return;
 			}
-			this.callbacks.onTick?.({
-				step: countStep,
-				isGroupStart,
-				stage: 'count-in',
-				totalSteps
-			});
-			if (this.countInRemaining <= 0) {
-				this.stage = 'playing';
-				this.callbacks.onStageChange?.(this.stage);
-				this.step = -1;
+			if (subdivisionLevel > 0) {
+				playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle', time);
+			}
+			if (groupingLevel > 0 && isGroupStart) {
+				playTone(this.ctx, 1200, 0.04, 0.35 * groupingLevel, 'square', time);
+			}
+			if (pulseLevel > 0 && isBarStart) {
+				playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine', time);
 			}
 			return;
 		}
 
-		this.step = (this.step + 1) % totalSteps;
-		const isGroupStart = groupStarts.has(this.step);
-		const isBarStart = this.step === 0;
 		if (mode === 'floors' && floorStride && layerStride) {
-			const isFloorStep = this.step % floorStride === 0;
-			const isLayerStep = this.step % layerStride === 0;
+			const isFloorStep = step % floorStride === 0;
+			const isLayerStep = step % layerStride === 0;
 			if (subdivisionLevel > 0 && isLayerStep) {
-				playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle');
+				playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle', time);
 			}
 			if (pulseLevel > 0 && isFloorStep) {
-				playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
+				playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine', time);
 			}
-		} else {
-			if (subdivisionLevel > 0) {
-				playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle');
-			}
-			if (groupingLevel > 0 && isGroupStart) {
-				playTone(this.ctx, 1200, 0.04, 0.35 * groupingLevel, 'square');
-			}
-			if (pulseLevel > 0 && isBarStart) {
-				playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine');
-			}
+			return;
 		}
 
-		this.callbacks.onTick?.({
-			step: this.step,
-			isGroupStart,
-			stage: 'playing',
-			totalSteps
-		});
+		if (subdivisionLevel > 0) {
+			playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle', time);
+		}
+		if (groupingLevel > 0 && isGroupStart) {
+			playTone(this.ctx, 1200, 0.04, 0.35 * groupingLevel, 'square', time);
+		}
+		if (pulseLevel > 0 && isBarStart) {
+			playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine', time);
+		}
+	}
+
+	private updateUi() {
+		if (!this.ctx) return;
+		const { bpm, totalSteps, grouping, mode, floorSteps, countIn, countInBars } = this.config;
+		const intervalSec = 60 / bpm;
+		const currentTime = this.ctx.currentTime;
+		if (currentTime < this.startTime) {
+			this.rafId = requestAnimationFrame(() => this.updateUi());
+			return;
+		}
+		const beatNumber = Math.floor((currentTime - this.startTime) / intervalSec);
+		if (beatNumber !== this.lastUiBeat) {
+			this.lastUiBeat = beatNumber;
+			const countInSteps = mode === 'floors' && floorSteps ? floorSteps : totalSteps;
+			const countInTotal = countIn ? countInSteps * Math.max(countInBars, 1) : 0;
+			const inCountIn = beatNumber < countInTotal;
+			const step = inCountIn
+				? beatNumber % countInSteps
+				: (beatNumber - countInTotal) % totalSteps;
+			const groupStarts = getGroupStarts(grouping);
+			const tickStage: RhythmStage = inCountIn ? 'count-in' : 'playing';
+			if (tickStage !== this.lastStage) {
+				this.lastStage = tickStage;
+				this.stage = tickStage;
+				this.callbacks.onStageChange?.(tickStage);
+			}
+			this.callbacks.onTick?.({
+				step,
+				isGroupStart: groupStarts.has(step),
+				stage: tickStage,
+				totalSteps
+			});
+		}
+		this.rafId = requestAnimationFrame(() => this.updateUi());
 	}
 }

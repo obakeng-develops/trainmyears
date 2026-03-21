@@ -5,7 +5,7 @@
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 
-	const modes = ['rhythm', 'harmony'] as const;
+	const modes = ['rhythm', 'harmony', 'melody'] as const;
 	let mode = $state<(typeof modes)[number]>('rhythm');
 	let hasLastMode = $state(false);
 
@@ -141,7 +141,7 @@
 			<Card.Root class="border/60 bg-[var(--surface-2)]/80 shadow-none backdrop-blur">
 				<Card.Header>
 					<Card.Title class="font-display text-lg">Melody</Card.Title>
-					<Card.Description>Coming next.</Card.Description>
+					<Card.Description>Movable Do phrases you can sing or tap back.</Card.Description>
 				</Card.Header>
 			</Card.Root>
 		</div>

@@ -1,19 +1,26 @@
 export type TriadType = 'major' | 'minor' | 'diminished' | 'augmented';
+export type SeventhType = 'maj7' | 'dom7' | 'min7' | 'm7b5' | 'dim7';
+export type ChordQuality = TriadType | SeventhType;
 
 export type HarmonyChord = {
 	rootPc: number;
-	triad: TriadType;
+	quality: ChordQuality;
 	inversion: 0 | 1 | 2;
 };
 
 const A4_FREQUENCY = 440;
 const A4_MIDI = 69;
 
-const TRIAD_INTERVALS: Record<TriadType, number[]> = {
+const CHORD_INTERVALS: Record<ChordQuality, number[]> = {
 	major: [0, 4, 7],
 	minor: [0, 3, 7],
 	diminished: [0, 3, 6],
-	augmented: [0, 4, 8]
+	augmented: [0, 4, 8],
+	maj7: [0, 4, 7, 11],
+	dom7: [0, 4, 7, 10],
+	min7: [0, 3, 7, 10],
+	m7b5: [0, 3, 6, 10],
+	dim7: [0, 3, 6, 9]
 };
 
 const midiToFrequency = (midi: number) =>
@@ -87,8 +94,13 @@ export class HarmonyEngine {
 		const fifthFilter = ctx.createBiquadFilter();
 		rootFilter.type = 'lowpass';
 		fifthFilter.type = 'lowpass';
-		rootFilter.frequency.value = 900;
-		fifthFilter.frequency.value = 900;
+		rootFilter.frequency.value = 760;
+		fifthFilter.frequency.value = 760;
+		rootFilter.Q.value = 0.3;
+		fifthFilter.Q.value = 0.3;
+		const now = ctx.currentTime;
+		rootGain.gain.setValueAtTime(0, now);
+		fifthGain.gain.setValueAtTime(0, now);
 		this.droneNodes = [rootGain, fifthGain];
 		this.droneOscillators = [rootOsc, fifthOsc];
 
@@ -102,9 +114,21 @@ export class HarmonyEngine {
 	}
 
 	stopDrone() {
+		const ctx = this.ctx;
+		const now = ctx?.currentTime ?? 0;
+		const release = 0.18;
+		this.droneNodes.forEach((gain) => {
+			try {
+				gain.gain.cancelScheduledValues(now);
+				gain.gain.setValueAtTime(gain.gain.value || 0, now);
+				gain.gain.linearRampToValueAtTime(0.0001, now + release);
+			} catch {
+				// ignore
+			}
+		});
 		this.droneOscillators.forEach((osc) => {
 			try {
-				osc.stop();
+				osc.stop(now + release + 0.02);
 			} catch {
 				// ignore
 			}
@@ -113,10 +137,10 @@ export class HarmonyEngine {
 		this.droneNodes = [];
 	}
 
-	playChord({ rootPc, triad, inversion }: HarmonyChord) {
+	playChord({ rootPc, quality, inversion }: HarmonyChord) {
 		const ctx = this.ensureContext();
 		const baseMidi = 60 + (rootPc % 12);
-		const intervals = TRIAD_INTERVALS[triad];
+		const intervals = CHORD_INTERVALS[quality];
 		const notes = intervals.map((interval) => baseMidi + interval);
 
 		const reordered = [...notes];
@@ -125,7 +149,7 @@ export class HarmonyEngine {
 			if (note !== undefined) reordered.push(note + 12);
 		}
 
-		const duration = 1.6;
+		const duration = 1.7;
 		reordered.forEach((midi) => {
 			const osc = ctx.createOscillator();
 			osc.type = 'triangle';
@@ -142,7 +166,7 @@ export class HarmonyEngine {
 		const ctx = this.ctx;
 		if (!rootGain || !fifthGain || !ctx) return;
 		const now = ctx.currentTime;
-		const attack = 0.08;
+		const attack = 0.18;
 		rootGain.gain.cancelScheduledValues(now);
 		fifthGain.gain.cancelScheduledValues(now);
 		rootGain.gain.setValueAtTime(rootGain.gain.value || 0, now);

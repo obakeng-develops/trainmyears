@@ -6,7 +6,14 @@
 		type RhythmStage,
 		type RhythmTick
 	} from '$lib/rhythm/engine';
-	import { HarmonyEngine, type TriadType } from '$lib/harmony/engine';
+	import { HarmonyEngine, type ChordQuality, type SeventhType, type TriadType } from '$lib/harmony/engine';
+	import {
+		MelodyEngine,
+		type MelodyEngineConfig,
+		type MelodyPhraseNote,
+		type MelodyTick,
+		type MelodyStage
+	} from '$lib/melody/engine';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
@@ -31,11 +38,86 @@
 
 	const meterOptions = ['1', '2', '3', '4', '5', '6', '7', '8'];
 	const roleOptions = ['instrumentalist', 'drummer', 'singer'] as const;
-	const phaseOptions = ['rhythm', 'harmony'] as const;
-	let { initialPhase = 'rhythm', showPhaseToggle = false } = $props();
+	const phaseOptions = ['rhythm', 'harmony', 'melody'] as const;
+	const FULL_DEGREES = [
+		'1',
+		'b2',
+		'2',
+		'#2',
+		'b3',
+		'3',
+		'4',
+		'#4',
+		'b5',
+		'5',
+		'#5',
+		'b6',
+		'6',
+		'#6',
+		'b7',
+		'7'
+	];
+	const DIATONIC_MAJOR = ['1', '2', '3', '4', '5', '6', '7'];
+	const DIATONIC_MINOR = ['1', '2', 'b3', '4', '5', 'b6', 'b7'];
+	const NEIGHBOR_DEGREES = ['b2', '#4', 'b6'];
+	const SCALE_OPTIONS = ['major', 'naturalMinor', 'harmonicMinor', 'melodicMinor'] as const;
+	const SCALE_LABELS: Record<(typeof SCALE_OPTIONS)[number], string> = {
+		major: 'Major',
+		naturalMinor: 'Natural Minor',
+		harmonicMinor: 'Harmonic Minor',
+		melodicMinor: 'Melodic Minor'
+	};
+	const SCALE_DEGREES: Record<(typeof SCALE_OPTIONS)[number], string[]> = {
+		major: ['1', '2', '3', '4', '5', '6', '7'],
+		naturalMinor: ['1', '2', 'b3', '4', '5', 'b6', 'b7'],
+		harmonicMinor: ['1', '2', 'b3', '4', '5', 'b6', '7'],
+		melodicMinor: ['1', '2', 'b3', '4', '5', '6', '7']
+	};
+	const DEGREE_OFFSETS: Record<string, number> = {
+		'1': 0,
+		'b2': 1,
+		'2': 2,
+		'#2': 3,
+		'b3': 3,
+		'3': 4,
+		'4': 5,
+		'#4': 6,
+		'b5': 6,
+		'5': 7,
+		'#5': 8,
+		'b6': 8,
+		'6': 9,
+		'#6': 10,
+		'b7': 10,
+		'7': 11
+	};
+	const FIXED_SINGLE_MIDI = 64;
+	const solfegeMap: Record<string, string> = {
+		'1': 'Do',
+		'b2': 'Ra',
+		'2': 'Re',
+		'#2': 'Ri',
+		'b3': 'Me',
+		'3': 'Mi',
+		'4': 'Fa',
+		'#4': 'Fi',
+		'b5': 'Se',
+		'5': 'Sol',
+		'#5': 'Si',
+		'b6': 'Le',
+		'6': 'La',
+		'#6': 'Li',
+		'b7': 'Te',
+		'7': 'Ti'
+	};
 
 	type Role = (typeof roleOptions)[number];
 	type Phase = (typeof phaseOptions)[number];
+
+	let { initialPhase = 'rhythm', showPhaseToggle = false } = $props<{
+		initialPhase?: Phase;
+		showPhaseToggle?: boolean;
+	}>();
 
 	const patternBank: Record<number, Pattern[]> = {
 		1: [{ id: '1-ta', label: 'Ta', syllables: ['Ta'] }],
@@ -156,16 +238,46 @@ const floorSyllables: Record<number, string[]> = {
 	let harmonyFunctionKey = $state('0');
 	let harmonyKeyMode = $state<'major' | 'minor'>('major');
 	let harmonyChordMode = $state<'function' | 'free'>('function');
+	let harmonyChordSet = $state<'triads' | 'sevenths'>('triads');
 	let harmonyAdvanceKey = $state(false);
 	let harmonyFifthsDirection = $state<'1' | '-1'>('1');
 	let harmonyFunction = $state('I');
 	let harmonyTriad = $state<TriadType>('major');
+	let harmonySeventh = $state<SeventhType>('dom7');
 	let harmonyInversion = $state<0 | 1 | 2>(0);
 	let harmonyDroneOn = $state(false);
 	let harmonyDroneVolume = $state(40);
 	let harmonyDroneBlend = $state(40);
 	let harmonyQuizMode = $state(false);
 	let harmonyReveal = $state(false);
+	let melodyMode = $state<'interactive' | 'passive'>('interactive');
+	let melodyPracticeMode = $state<'phrase' | 'scale' | 'single'>('phrase');
+	let melodyScaleMode = $state<(typeof SCALE_OPTIONS)[number]>('major');
+	let melodyScaleChoices = $state<(typeof SCALE_OPTIONS)[number][]>([]);
+	let melodyScaleCorrect = $state<(typeof SCALE_OPTIONS)[number] | ''>('');
+	let melodyScaleFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
+	let melodySingleChoices = $state<string[]>([]);
+	let melodySingleCorrect = $state('');
+	let melodySingleFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
+	let melodyRepresentation = $state<'solfege' | 'numbers'>('solfege');
+	let melodyKey = $state('0');
+	let melodyKeyMode = $state<'major' | 'minor'>('major');
+	let melodyBpm = $state(92);
+	let melodyPhraseLength = $state(4);
+	let melodyLoopBars = $state(8);
+	let melodyMaxLeap = $state(2);
+	let melodyAutoAdvanceKey = $state(true);
+	let melodyDroneOn = $state(false);
+	let melodyStage = $state<'idle' | 'count-in' | 'playing' | 'rest'>('idle');
+	let melodyStep = $state(0);
+	let melodyDegrees = $state<string[]>([]);
+	let melodyInput = $state<string[]>([]);
+	let melodyFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
+	let melodyReveal = $state(false);
+	let melodyAudioReady = $state(false);
+	let melodyPlaying = $state(false);
+	let melodyConfigKey = $state('');
+	let melodyAllowedDegrees = $state<string[]>([...DIATONIC_MAJOR]);
 	let rhythmAudioReady = $state(false);
 	let harmonyAudioReady = $state(false);
 
@@ -181,6 +293,58 @@ const floorSyllables: Record<number, string[]> = {
 	});
 
 	const harmonyEngine = new HarmonyEngine();
+	const melodyEngine = new MelodyEngine({
+		onTick: (tick: MelodyTick) => {
+			melodyStage = tick.stage;
+			melodyStep = tick.step;
+		},
+		onStageChange: (nextStage: MelodyStage) => {
+			melodyStage = nextStage;
+			if (nextStage === 'idle') {
+				melodyPlaying = false;
+			}
+		},
+		onPhrase: (phrase: MelodyPhraseNote[]) => {
+			melodyDegrees = phrase.map((note) => String(note.degree));
+		},
+		onLoop: (loopIndex: number) => {
+			if (!melodyAutoAdvanceKey || melodyMode !== 'passive') return;
+			const currentIndex = circleOfFifths.indexOf(Number(melodyKey));
+			const nextIndex = (currentIndex + 1 + circleOfFifths.length) % circleOfFifths.length;
+			melodyKey = String(circleOfFifths[nextIndex]);
+			melodyEngine.setConfig({ keyPc: Number(melodyKey) });
+			if (melodyDroneOn) {
+				melodyEngine.startDrone();
+			}
+			void loopIndex;
+		}
+	} as any);
+
+	const labelForMelodyDegree = (degree: string) =>
+		melodyRepresentation === 'solfege' ? solfegeMap[degree] ?? degree : degree;
+	const labelForMelodyScale = (scale: (typeof SCALE_OPTIONS)[number] | '') =>
+		scale ? SCALE_LABELS[scale] : '';
+	const shuffle = <T,>(items: T[]) => [...items].sort(() => Math.random() - 0.5);
+
+	const toggleMelodyDegree = (degree: string) => {
+		if (melodyAllowedDegrees.includes(degree)) {
+			melodyAllowedDegrees = melodyAllowedDegrees.filter((value) => value !== degree);
+		} else {
+			melodyAllowedDegrees = [...melodyAllowedDegrees, degree];
+		}
+	};
+
+	const applyMelodyPreset = (preset: 'diatonic' | 'neighbors' | 'chromatic') => {
+		if (preset === 'diatonic') {
+			melodyAllowedDegrees = [...melodyDiatonicRow];
+			return;
+		}
+		if (preset === 'neighbors') {
+			melodyAllowedDegrees = Array.from(new Set([...melodyDiatonicRow, ...NEIGHBOR_DEGREES]));
+			return;
+		}
+		melodyAllowedDegrees = [...FULL_DEGREES];
+	};
 
 	const unlockRhythmAudio = async () => {
 		if (rhythmAudioReady) return;
@@ -199,6 +363,16 @@ const floorSyllables: Record<number, string[]> = {
 			harmonyAudioReady = true;
 		} catch {
 			harmonyAudioReady = false;
+		}
+	};
+
+	const unlockMelodyAudio = async () => {
+		if (melodyAudioReady) return;
+		try {
+			await melodyEngine.unlock();
+			melodyAudioReady = true;
+		} catch {
+			melodyAudioReady = false;
 		}
 	};
 
@@ -245,8 +419,17 @@ const floorSyllables: Record<number, string[]> = {
 
 	const phaseLabels: Record<Phase, string> = {
 		rhythm: 'Rhythm',
-		harmony: 'Harmony'
+		harmony: 'Harmony',
+		melody: 'Melody'
 	};
+
+	const consoleTitle = $derived(
+		phase === 'rhythm'
+			? 'Rhythm Console'
+			: phase === 'harmony'
+				? 'Harmony Console'
+				: 'Melody Console'
+	);
 
 	const rolePresets: Record<Role, { bpm: number; countIn: boolean }> = {
 		instrumentalist: { bpm: 96, countIn: true },
@@ -528,6 +711,13 @@ const floorSyllables: Record<number, string[]> = {
 		{ value: 'diminished', label: 'Diminished' },
 		{ value: 'augmented', label: 'Augmented' }
 	];
+	const harmonySevenths: { value: SeventhType; label: string }[] = [
+		{ value: 'maj7', label: 'Major 7' },
+		{ value: 'dom7', label: 'Dominant 7' },
+		{ value: 'min7', label: 'Minor 7' },
+		{ value: 'm7b5', label: 'Half-dim 7' },
+		{ value: 'dim7', label: 'Dim 7' }
+	];
 	const majorScaleOffsets = [0, 2, 4, 5, 7, 9, 11];
 	const minorScaleOffsets = [0, 2, 3, 5, 7, 8, 10];
 	const majorQualities: TriadType[] = ['major', 'minor', 'minor', 'major', 'major', 'minor', 'diminished'];
@@ -540,11 +730,45 @@ const floorSyllables: Record<number, string[]> = {
 		'major',
 		'major'
 	];
+	const majorSevenths: ChordQuality[] = ['maj7', 'min7', 'min7', 'maj7', 'dom7', 'min7', 'm7b5'];
+	const minorSevenths: ChordQuality[] = ['min7', 'm7b5', 'maj7', 'min7', 'min7', 'maj7', 'dom7'];
 	const harmonyKeyLabel = $derived(
 		harmonyKeys.find((key) => String(key.pc) === harmonyKey)?.label ?? 'C'
 	);
+	const melodyKeyLabel = $derived(
+		harmonyKeys.find((key) => String(key.pc) === melodyKey)?.label ?? 'C'
+	);
+	const melodyNextKeyLabel = $derived((() => {
+		if (!melodyAutoAdvanceKey) return null;
+		const currentIndex = circleOfFifths.indexOf(Number(melodyKey));
+		const nextIndex = (currentIndex + 1 + circleOfFifths.length) % circleOfFifths.length;
+		const nextKeyPc = circleOfFifths[nextIndex];
+		return harmonyKeys.find((key) => key.pc === nextKeyPc)?.label ?? 'C';
+	})());
+	const melodyDiatonicRow = $derived(
+		melodyKeyMode === 'minor' ? DIATONIC_MINOR : DIATONIC_MAJOR
+	);
+	const melodyChromaticRow = $derived(
+		FULL_DEGREES.filter((degree) => !melodyDiatonicRow.includes(degree))
+	);
+	const melodyDiatonicSelected = $derived(
+		melodyDiatonicRow.filter((degree) => melodyAllowedDegrees.includes(degree))
+	);
+	const melodyChromaticSelected = $derived(
+		melodyChromaticRow.filter((degree) => melodyAllowedDegrees.includes(degree))
+	);
 	const harmonyFunctionKeyLabel = $derived(
 		harmonyKeys.find((key) => String(key.pc) === harmonyFunctionKey)?.label ?? 'C'
+	);
+	const melodyProgressPercent = $derived(
+		melodyPhraseLength
+			? Math.min(((melodyStep + 1) / melodyPhraseLength) * 100, 100)
+			: 0
+	);
+	const melodySettingsKey = $derived(
+		`${melodyPracticeMode}-${melodyScaleMode}-${melodyMode}-${melodyRepresentation}-${melodyKey}-${melodyKeyMode}-${melodyBpm}-${melodyPhraseLength}-${melodyLoopBars}-${melodyMaxLeap}-${melodyAutoAdvanceKey}-${melodyDroneOn}-${
+			melodyAllowedDegrees.join(',')
+		}`
 	);
 	const harmonyFunctions = $derived(
 		harmonyKeyMode === 'major' ? harmonyFunctionsMajor : harmonyFunctionsMinor
@@ -561,6 +785,14 @@ const floorSyllables: Record<number, string[]> = {
 		harmonyKeyMode === 'major'
 			? majorQualities[harmonyFunctionIndex]
 			: minorQualities[harmonyFunctionIndex]
+	);
+	const harmonyDerivedSeventh = $derived(
+		harmonyKeyMode === 'major'
+			? majorSevenths[harmonyFunctionIndex]
+			: minorSevenths[harmonyFunctionIndex]
+	);
+	const harmonyDerivedQuality = $derived(
+		harmonyChordSet === 'triads' ? harmonyDerivedTriad : harmonyDerivedSeventh
 	);
 	const harmonyInversionLabel = $derived(
 		harmonyInversion === 0 ? 'Root position' : harmonyInversion === 1 ? '1st inversion' : '2nd inversion'
@@ -608,6 +840,12 @@ const floorSyllables: Record<number, string[]> = {
 	});
 
 	$effect(() => {
+		if (phase !== 'melody') {
+			stopMelody();
+		}
+	});
+
+	$effect(() => {
 		if (!harmonyFunctions.includes(harmonyFunction)) {
 			harmonyFunction = harmonyFunctions[0];
 		}
@@ -631,6 +869,29 @@ const floorSyllables: Record<number, string[]> = {
 			harmonyEngine.startDrone();
 		} else {
 			harmonyEngine.stopDrone();
+		}
+	});
+
+	$effect(() => {
+		if (!melodyPlaying && melodyMode === 'passive') {
+			generateMelodyPhrase();
+		}
+	});
+
+	$effect(() => {
+		if (melodyPlaying && melodySettingsKey !== melodyConfigKey) {
+			stopMelody();
+			void startMelody();
+		}
+		melodyConfigKey = melodySettingsKey;
+	});
+
+	$effect(() => {
+		if (!melodyAudioReady) return;
+		if (melodyDroneOn) {
+			melodyEngine.startDrone();
+		} else {
+			melodyEngine.stopDrone();
 		}
 	});
 
@@ -673,7 +934,12 @@ const floorSyllables: Record<number, string[]> = {
 		harmonyInversion = inversion;
 		harmonyEngine.playChord({
 			rootPc: harmonyRootPc,
-			triad: harmonyChordMode === 'function' ? harmonyDerivedTriad : harmonyTriad,
+			quality:
+				harmonyChordMode === 'function'
+					? harmonyDerivedQuality
+					: harmonyChordSet === 'triads'
+						? harmonyTriad
+						: harmonySeventh,
 			inversion
 		});
 		if (harmonyQuizMode) harmonyReveal = false;
@@ -682,9 +948,101 @@ const floorSyllables: Record<number, string[]> = {
 		}
 	};
 
+	const generateMelodyPhrase = () => {
+		let allowed = melodyAllowedDegrees;
+		let nextKeyPc = Number(melodyKey);
+		if (melodyPracticeMode === 'scale') {
+			allowed = SCALE_DEGREES[melodyScaleMode];
+		} else if (melodyPracticeMode === 'single') {
+			const candidates = melodyAllowedDegrees.length ? melodyAllowedDegrees : melodyDiatonicRow;
+			const degree = shuffle(candidates)[0] ?? '1';
+			const offset = DEGREE_OFFSETS[degree] ?? 0;
+			nextKeyPc = (FIXED_SINGLE_MIDI - 60 - offset + 1200) % 12;
+			allowed = [degree];
+			melodySingleCorrect = degree;
+			melodySingleChoices = shuffle(Array.from(new Set([degree, ...melodyDiatonicRow]))).slice(0, 4);
+			melodySingleFeedback = 'idle';
+			melodyKey = String(nextKeyPc);
+		}
+		melodyEngine.setConfig({
+			bpm: melodyBpm,
+			keyPc: nextKeyPc,
+			mode: melodyKeyMode,
+			phraseLength: melodyPracticeMode === 'single' ? 1 : melodyPhraseLength,
+			loopBars: melodyLoopBars,
+			maxLeap: melodyMaxLeap,
+			loop: melodyMode === 'passive',
+			countInBars: 1,
+			regenerateOnLoop: melodyMode === 'passive',
+			allowedDegrees: allowed
+		} as Partial<MelodyEngineConfig>);
+		melodyEngine.generatePhrase();
+	};
+
+	const startMelody = async () => {
+		await unlockMelodyAudio();
+		melodyFeedback = 'idle';
+		melodyReveal = false;
+		melodyInput = [];
+		if (melodyPracticeMode === 'scale') {
+			melodyScaleCorrect = melodyScaleMode;
+			melodyScaleChoices = shuffle([...SCALE_OPTIONS]);
+			melodyScaleFeedback = 'idle';
+		}
+		if (melodyMode === 'passive' || melodyDegrees.length === 0) {
+			generateMelodyPhrase();
+		}
+		melodyEngine.start();
+		if (melodyDroneOn) melodyEngine.startDrone();
+		melodyPlaying = true;
+	};
+
+	const stopMelody = () => {
+		melodyEngine.stop();
+		melodyEngine.stopDrone();
+		melodyPlaying = false;
+		melodyStage = 'idle';
+		melodyStep = 0;
+	};
+
+	const toggleMelodyPlayback = () => {
+		if (melodyPlaying) stopMelody();
+		else void startMelody();
+	};
+
+	const onTapMelodyDegree = (degree: string) => {
+		if (melodyMode !== 'interactive') return;
+		if (melodyInput.length >= melodyPhraseLength) return;
+		melodyInput = [...melodyInput, degree];
+	};
+
+	const submitMelody = () => {
+		const isCorrect =
+			melodyInput.length === melodyDegrees.length &&
+			melodyInput.every((value, index) => value === melodyDegrees[index]);
+		melodyFeedback = isCorrect ? 'correct' : 'incorrect';
+	};
+
+	const submitMelodyScale = (choice: (typeof SCALE_OPTIONS)[number]) => {
+		melodyScaleFeedback = choice === melodyScaleCorrect ? 'correct' : 'incorrect';
+	};
+
+	const submitMelodySingle = (choice: string) => {
+		melodySingleFeedback = choice === melodySingleCorrect ? 'correct' : 'incorrect';
+	};
+
+	const clearMelodyInput = () => {
+		melodyInput = [];
+	};
+
+	const backspaceMelodyInput = () => {
+		melodyInput = melodyInput.slice(0, -1);
+	};
+
 	onMount(() => {
 		if (typeof window === 'undefined') return;
 		const raw = window.localStorage.getItem('rhythm-console');
+		const shared = window.localStorage.getItem('tm:melodySettings');
 		if (raw) {
 			try {
 					const saved = JSON.parse(raw) as Partial<{
@@ -708,15 +1066,30 @@ const floorSyllables: Record<number, string[]> = {
 						harmonyFunctionKey: string;
 						harmonyKeyMode: 'major' | 'minor';
 						harmonyChordMode: 'function' | 'free';
+						harmonyChordSet: 'triads' | 'sevenths';
 						harmonyAdvanceKey: boolean;
 						harmonyFifthsDirection: '1' | '-1';
 						harmonyFunction: string;
 						harmonyTriad: TriadType;
+						harmonySeventh: SeventhType;
 						harmonyDroneOn: boolean;
 						harmonyDroneVolume: number;
 						harmonyDroneBlend: number;
 						harmonyQuizMode: boolean;
-				}>;
+						melodyMode: 'interactive' | 'passive';
+						melodyPracticeMode: 'phrase' | 'scale' | 'single';
+						melodyScaleMode: (typeof SCALE_OPTIONS)[number];
+						melodyRepresentation: 'solfege' | 'numbers';
+						melodyKey: string;
+						melodyKeyMode: 'major' | 'minor';
+						melodyBpm: number;
+						melodyPhraseLength: number;
+						melodyLoopBars: number;
+						melodyMaxLeap: number;
+						melodyAutoAdvanceKey: boolean;
+						melodyDroneOn: boolean;
+						melodyAllowedDegrees: string[];
+					}>;
 			if (showPhaseToggle && saved.phase && phaseOptions.includes(saved.phase)) phase = saved.phase;
 				if (saved.role && roleOptions.includes(saved.role)) role = saved.role;
 				if (typeof saved.bpm === 'number') bpmValue = saved.bpm;
@@ -738,21 +1111,47 @@ const floorSyllables: Record<number, string[]> = {
 						harmonyFunctionKey = saved.harmonyFunctionKey;
 					if (saved.harmonyKeyMode) harmonyKeyMode = saved.harmonyKeyMode;
 					if (saved.harmonyChordMode) harmonyChordMode = saved.harmonyChordMode;
+					if (saved.harmonyChordSet) harmonyChordSet = saved.harmonyChordSet;
 					if (typeof saved.harmonyAdvanceKey === 'boolean')
 						harmonyAdvanceKey = saved.harmonyAdvanceKey;
 					if (saved.harmonyFifthsDirection)
 						harmonyFifthsDirection = saved.harmonyFifthsDirection;
 					if (typeof saved.harmonyFunction === 'string') harmonyFunction = saved.harmonyFunction;
 					if (saved.harmonyTriad) harmonyTriad = saved.harmonyTriad;
+					if (saved.harmonySeventh) harmonySeventh = saved.harmonySeventh;
 				if (typeof saved.harmonyDroneOn === 'boolean') harmonyDroneOn = saved.harmonyDroneOn;
 				if (typeof saved.harmonyDroneVolume === 'number')
 					harmonyDroneVolume = saved.harmonyDroneVolume;
 				if (typeof saved.harmonyDroneBlend === 'number')
 					harmonyDroneBlend = saved.harmonyDroneBlend;
-				if (typeof saved.harmonyQuizMode === 'boolean')
-					harmonyQuizMode = saved.harmonyQuizMode;
+					if (typeof saved.harmonyQuizMode === 'boolean')
+						harmonyQuizMode = saved.harmonyQuizMode;
+					if (saved.melodyMode) melodyMode = saved.melodyMode;
+					if (saved.melodyPracticeMode) melodyPracticeMode = saved.melodyPracticeMode;
+					if (saved.melodyScaleMode) melodyScaleMode = saved.melodyScaleMode;
+					if (saved.melodyRepresentation) melodyRepresentation = saved.melodyRepresentation;
+					if (typeof saved.melodyKey === 'string') melodyKey = saved.melodyKey;
+					if (saved.melodyKeyMode) melodyKeyMode = saved.melodyKeyMode;
+					if (typeof saved.melodyBpm === 'number') melodyBpm = saved.melodyBpm;
+					if (typeof saved.melodyPhraseLength === 'number')
+						melodyPhraseLength = saved.melodyPhraseLength;
+					if (typeof saved.melodyLoopBars === 'number') melodyLoopBars = saved.melodyLoopBars;
+					if (typeof saved.melodyMaxLeap === 'number') melodyMaxLeap = saved.melodyMaxLeap;
+					if (typeof saved.melodyAutoAdvanceKey === 'boolean')
+						melodyAutoAdvanceKey = saved.melodyAutoAdvanceKey;
+					if (typeof saved.melodyDroneOn === 'boolean') melodyDroneOn = saved.melodyDroneOn;
+					if (Array.isArray(saved.melodyAllowedDegrees))
+						melodyAllowedDegrees = saved.melodyAllowedDegrees;
 				} catch (error) {
 					console.warn('Failed to load rhythm settings', error);
+				}
+			}
+			if (shared) {
+				try {
+					const saved = JSON.parse(shared) as Partial<{ allowedDegrees: string[] }>;
+					if (Array.isArray(saved.allowedDegrees)) melodyAllowedDegrees = saved.allowedDegrees;
+				} catch {
+					// ignore
 				}
 			}
 		if (!raw && !learnSkipped) {
@@ -787,21 +1186,52 @@ const floorSyllables: Record<number, string[]> = {
 				harmonyFunctionKey,
 				harmonyKeyMode,
 				harmonyChordMode,
+				harmonyChordSet,
 				harmonyAdvanceKey,
 				harmonyFifthsDirection,
 				harmonyFunction,
 				harmonyTriad,
+				harmonySeventh,
 				harmonyDroneOn,
 				harmonyDroneVolume,
 				harmonyDroneBlend,
-				harmonyQuizMode
+				harmonyQuizMode,
+					melodyMode,
+					melodyPracticeMode,
+					melodyScaleMode,
+					melodyRepresentation,
+				melodyKey,
+				melodyKeyMode,
+				melodyBpm,
+				melodyPhraseLength,
+				melodyLoopBars,
+				melodyMaxLeap,
+					melodyAutoAdvanceKey,
+					melodyDroneOn,
+					melodyAllowedDegrees
 			})
 		);
+	});
+
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		window.localStorage.setItem(
+			'tm:melodySettings',
+			JSON.stringify({ allowedDegrees: melodyAllowedDegrees })
+		);
+	});
+
+	$effect(() => {
+		if (!melodyAllowedDegrees.length) {
+			melodyAllowedDegrees = [...melodyDiatonicRow];
+		}
 	});
 
 	onDestroy(() => {
 		engine.stop();
 		harmonyEngine.stopDrone();
+		melodyEngine.stop();
+		melodyEngine.stopDrone();
 	});
 </script>
 
@@ -812,18 +1242,22 @@ const floorSyllables: Record<number, string[]> = {
 				<div class="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
 					Phase 1 · {phaseLabels[phase]}
 				</div>
-				<h1 class="font-display text-2xl font-semibold text-foreground md:text-4xl">
-					{phase === 'rhythm' ? 'Rhythm Console' : 'Harmony Console'}
-				</h1>
-				{#if phase === 'rhythm'}
-					<p class="hidden max-w-xl text-sm text-muted-foreground md:block md:text-base">
-						{roleCopy[role].header} {roleCopy[role].instructions}
-					</p>
-				{:else}
-					<p class="hidden max-w-xl text-sm text-muted-foreground md:block md:text-base">
-						Anchor the key with a drone, then train chord function and inversion awareness.
-					</p>
-				{/if}
+			<h1 class="font-display text-2xl font-semibold text-foreground md:text-4xl">
+				{consoleTitle}
+			</h1>
+			{#if phase === 'rhythm'}
+				<p class="hidden max-w-xl text-sm text-muted-foreground md:block md:text-base">
+					{roleCopy[role].header} {roleCopy[role].instructions}
+				</p>
+			{:else if phase === 'harmony'}
+				<p class="hidden max-w-xl text-sm text-muted-foreground md:block md:text-base">
+					Anchor the key with a drone, then train chord function and inversion awareness.
+				</p>
+			{:else}
+				<p class="hidden max-w-xl text-sm text-muted-foreground md:block md:text-base">
+					Movable Do phrases with adjustable range, leap size, and loop length.
+				</p>
+			{/if}
 				<p class="text-xs text-muted-foreground">
 					iOS: Silent Mode mutes web audio. Flip the ring switch if you hear nothing.
 				</p>
@@ -837,15 +1271,31 @@ const floorSyllables: Record<number, string[]> = {
 					</ToggleGroup.Root>
 				{/if}
 			</div>
-			<div class="hidden items-center gap-3 lg:flex">
-				<Badge class="px-3 py-1 text-xs">Studio Console</Badge>
+		<div class="hidden items-center gap-3 lg:flex">
+			<Badge class="px-3 py-1 text-xs">Studio Console</Badge>
+			{#if phase === 'rhythm'}
 				<Badge variant="secondary" class="px-3 py-1 text-xs">
 					{roleLabels[role]}
 				</Badge>
 				<Badge variant="secondary" class="px-3 py-1 text-xs">
 					Odd meter focus
 				</Badge>
-			</div>
+			{:else if phase === 'harmony'}
+				<Badge variant="secondary" class="px-3 py-1 text-xs">
+					Function + inversion
+				</Badge>
+				<Badge variant="secondary" class="px-3 py-1 text-xs">
+					Drone anchored
+				</Badge>
+			{:else}
+				<Badge variant="secondary" class="px-3 py-1 text-xs">
+					Movable Do
+				</Badge>
+				<Badge variant="secondary" class="px-3 py-1 text-xs">
+					Phrase builder
+				</Badge>
+			{/if}
+		</div>
 		</header>
 
 		{#if phase === 'rhythm'}
@@ -1477,7 +1927,7 @@ const floorSyllables: Record<number, string[]> = {
 				</Card.Root>
 			</main>
 		</div>
-	{:else}
+	{:else if phase === 'harmony'}
 		<div class="flex flex-col gap-6 lg:grid lg:grid-cols-[320px,1fr]">
 			<aside class="order-2 space-y-6 lg:order-none">
 				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
@@ -1530,12 +1980,17 @@ const floorSyllables: Record<number, string[]> = {
 				</Card.Root>
 
 				<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
-					<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
-						Target chord
-						<span class="text-xs text-muted-foreground">
-							{harmonyFunction} · {harmonyChordMode === 'function' ? harmonyDerivedTriad : harmonyTriad}
-						</span>
-					</summary>
+						<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
+							Target chord
+							<span class="text-xs text-muted-foreground">
+								{harmonyFunction} ·
+								{harmonyChordMode === 'function'
+									? harmonyDerivedQuality
+									: harmonyChordSet === 'triads'
+										? harmonyTriad
+										: harmonySeventh}
+							</span>
+						</summary>
 					<div class="mt-4 space-y-4">
 						<div class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
 							Function = the chord's role in the key. Function key can shift along the circle of fifths.
@@ -1552,6 +2007,13 @@ const floorSyllables: Record<number, string[]> = {
 							<ToggleGroup.Root type="single" bind:value={harmonyChordMode} class="flex flex-wrap gap-2">
 								<ToggleGroup.Item value="function" class="px-3 text-xs">Function</ToggleGroup.Item>
 								<ToggleGroup.Item value="free" class="px-3 text-xs">Free</ToggleGroup.Item>
+							</ToggleGroup.Root>
+						</div>
+						<div class="space-y-2">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Chord set</div>
+							<ToggleGroup.Root type="single" bind:value={harmonyChordSet} class="flex flex-wrap gap-2">
+								<ToggleGroup.Item value="triads" class="px-3 text-xs">Triads</ToggleGroup.Item>
+								<ToggleGroup.Item value="sevenths" class="px-3 text-xs">7ths</ToggleGroup.Item>
 							</ToggleGroup.Root>
 						</div>
 						<div class="space-y-2">
@@ -1583,9 +2045,12 @@ const floorSyllables: Record<number, string[]> = {
 									{/each}
 								</ToggleGroup.Root>
 							</div>
-							{#if harmonyChordMode === 'free'}
-								<div class="space-y-2">
-									<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triad quality</div>
+						{#if harmonyChordMode === 'free'}
+							<div class="space-y-2">
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									{harmonyChordSet === 'triads' ? 'Triad quality' : '7th quality'}
+								</div>
+								{#if harmonyChordSet === 'triads'}
 									<ToggleGroup.Root type="single" bind:value={harmonyTriad} class="flex flex-wrap gap-2">
 										{#each harmonyTriads as triad}
 											<ToggleGroup.Item value={triad.value} class="px-3 text-xs">
@@ -1593,8 +2058,17 @@ const floorSyllables: Record<number, string[]> = {
 											</ToggleGroup.Item>
 										{/each}
 									</ToggleGroup.Root>
-								</div>
-							{/if}
+								{:else}
+									<ToggleGroup.Root type="single" bind:value={harmonySeventh} class="flex flex-wrap gap-2">
+										{#each harmonySevenths as chord}
+											<ToggleGroup.Item value={chord.value} class="px-3 text-xs">
+												{chord.label}
+											</ToggleGroup.Item>
+										{/each}
+									</ToggleGroup.Root>
+								{/if}
+							</div>
+						{/if}
 						</div>
 						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
 							<div>
@@ -1651,17 +2125,21 @@ const floorSyllables: Record<number, string[]> = {
 									Function key: {harmonyFunctionKeyLabel}
 								</div>
 							</div>
-							<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triad</div>
-								<div class="text-sm font-semibold">
-									{harmonyQuizMode
-										? 'Hidden'
-										: harmonyChordMode === 'function'
-											? harmonyDerivedTriad
-											: harmonyTriad}
-								</div>
-								<div class="text-xs text-muted-foreground">Random inversion each play</div>
+						<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+								{harmonyChordSet === 'triads' ? 'Triad' : '7th chord'}
 							</div>
+							<div class="text-sm font-semibold">
+								{harmonyQuizMode
+									? 'Hidden'
+									: harmonyChordMode === 'function'
+										? harmonyDerivedQuality
+										: harmonyChordSet === 'triads'
+											? harmonyTriad
+											: harmonySeventh}
+							</div>
+							<div class="text-xs text-muted-foreground">Random inversion each play</div>
+						</div>
 							<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
 								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Inversion</div>
 								{#if harmonyQuizMode && !harmonyReveal}
@@ -1681,15 +2159,395 @@ const floorSyllables: Record<number, string[]> = {
 								<span>
 									Function key: {harmonyFunctionKeyLabel} · {harmonyFunction}
 								</span>
-								<span>
-									Triad: {harmonyChordMode === 'function' ? harmonyDerivedTriad : harmonyTriad}
-								</span>
+							<span>
+								{harmonyChordSet === 'triads' ? 'Triad' : '7th'}:{' '}
+								{harmonyChordMode === 'function'
+									? harmonyDerivedQuality
+									: harmonyChordSet === 'triads'
+										? harmonyTriad
+										: harmonySeventh}
+							</span>
 								<span>Inversion: {harmonyInversionLabel}</span>
 							</div>
 							<div class="mt-3 text-sm">
 								Listen for how the chord feels against the drone, then name its function.
 							</div>
 						</div>
+					</Card.Content>
+				</Card.Root>
+			</main>
+		</div>
+	{:else}
+		<div class="flex flex-col gap-6 lg:grid lg:grid-cols-[320px,1fr]">
+			<aside class="order-2 space-y-6 lg:order-none">
+				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+					<Card.Header>
+						<Card.Title class="font-display text-lg">Mode</Card.Title>
+						<Card.Description>Interactive tapback or passive sing-along.</Card.Description>
+					</Card.Header>
+					<Card.Content class="space-y-4">
+						<ToggleGroup.Root type="single" bind:value={melodyMode} class="flex flex-wrap gap-2">
+							<ToggleGroup.Item value="interactive" class="px-3 text-xs">Interactive</ToggleGroup.Item>
+							<ToggleGroup.Item value="passive" class="px-3 text-xs">Passive</ToggleGroup.Item>
+						</ToggleGroup.Root>
+						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<span class="text-xs text-muted-foreground">Auto‑advance key</span>
+							<Switch bind:checked={melodyAutoAdvanceKey} />
+						</div>
+						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<span class="text-xs text-muted-foreground">Drone</span>
+							<Switch bind:checked={melodyDroneOn} onclick={() => void unlockMelodyAudio()} />
+						</div>
+					</Card.Content>
+				</Card.Root>
+
+				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+					<Card.Header>
+						<Card.Title class="font-display text-lg">Key & Mode</Card.Title>
+						<Card.Description>Movable Do follows the selected key.</Card.Description>
+					</Card.Header>
+					<Card.Content class="space-y-3">
+						<Select.Root type="single" bind:value={melodyKey as never}>
+							<Select.Trigger class="w-full">
+								<span>{melodyKeyLabel}</span>
+							</Select.Trigger>
+							<Select.Content>
+								{#each harmonyKeys as keyOption}
+									<Select.Item value={String(keyOption.pc)}>{keyOption.label}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+						<ToggleGroup.Root type="single" bind:value={melodyKeyMode} class="flex flex-wrap gap-2">
+							<ToggleGroup.Item value="major" class="px-3 text-xs">Major</ToggleGroup.Item>
+							<ToggleGroup.Item value="minor" class="px-3 text-xs">Minor</ToggleGroup.Item>
+						</ToggleGroup.Root>
+					</Card.Content>
+				</Card.Root>
+
+				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+					<Card.Header>
+						<Card.Title class="font-display text-lg">Phrase</Card.Title>
+						<Card.Description>Set the contour and density.</Card.Description>
+					</Card.Header>
+					<Card.Content class="space-y-4">
+						<div class="space-y-2">
+							<div class="flex items-center justify-between text-xs text-muted-foreground">
+								<span>Length</span>
+								<span class="text-foreground">{melodyPhraseLength} notes</span>
+							</div>
+							<Slider type="single" min={2} max={7} step={1} bind:value={melodyPhraseLength} />
+						</div>
+						<div class="space-y-2">
+							<div class="flex items-center justify-between text-xs text-muted-foreground">
+								<span>Max leap</span>
+								<span class="text-foreground">{melodyMaxLeap}</span>
+							</div>
+							<Slider type="single" min={1} max={4} step={1} bind:value={melodyMaxLeap} />
+						</div>
+						<div class="space-y-2">
+							<div class="flex items-center justify-between text-xs text-muted-foreground">
+								<span>Loop length</span>
+								<span class="text-foreground">{melodyLoopBars} bars</span>
+							</div>
+							<Slider type="single" min={4} max={16} step={1} bind:value={melodyLoopBars} />
+						</div>
+						<div class="space-y-2">
+							<div class="flex items-center justify-between text-xs text-muted-foreground">
+								<span>BPM</span>
+								<span class="text-foreground">{melodyBpm}</span>
+							</div>
+							<Slider type="single" min={60} max={130} step={1} bind:value={melodyBpm} />
+						</div>
+						{#if melodyPracticeMode === 'scale'}
+							<div class="space-y-2">
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scale</div>
+								<ToggleGroup.Root type="single" bind:value={melodyScaleMode} class="flex flex-wrap gap-2">
+									{#each SCALE_OPTIONS as option}
+										<ToggleGroup.Item value={option} class="px-3 text-xs">
+											{SCALE_LABELS[option]}
+										</ToggleGroup.Item>
+									{/each}
+								</ToggleGroup.Root>
+							</div>
+						{/if}
+						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<span class="text-xs text-muted-foreground">Representation</span>
+							<ToggleGroup.Root type="single" bind:value={melodyRepresentation} class="flex gap-2">
+								<ToggleGroup.Item value="solfege" class="px-3 text-xs">Solfege</ToggleGroup.Item>
+								<ToggleGroup.Item value="numbers" class="px-3 text-xs">Numbers</ToggleGroup.Item>
+							</ToggleGroup.Root>
+						</div>
+					</Card.Content>
+				</Card.Root>
+
+				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+					<Card.Header>
+						<Card.Title class="font-display text-lg">Notes to practice</Card.Title>
+						<Card.Description>Choose diatonic and chromatic targets.</Card.Description>
+					</Card.Header>
+					<Card.Content class="space-y-4">
+						<div class="flex flex-wrap gap-2">
+							<Button
+								variant="secondary"
+								onclick={() => applyMelodyPreset('diatonic')}
+							>
+								Diatonic
+							</Button>
+							<Button
+								variant="secondary"
+								onclick={() => applyMelodyPreset('neighbors')}
+							>
+								Neighbors
+							</Button>
+							<Button
+								variant="secondary"
+								onclick={() => applyMelodyPreset('chromatic')}
+							>
+								Chromatic
+							</Button>
+						</div>
+						<div class="space-y-2">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Diatonic</div>
+							<div class="grid grid-cols-7 gap-2">
+								{#each melodyDiatonicRow as degree}
+									<Button
+										variant={melodyAllowedDegrees.includes(degree) ? 'default' : 'secondary'}
+										onclick={() => toggleMelodyDegree(degree)}
+									>
+										{labelForMelodyDegree(degree)}
+									</Button>
+								{/each}
+							</div>
+						</div>
+						<div class="space-y-2">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Chromatic</div>
+							<div class="grid grid-cols-9 gap-2">
+								{#each melodyChromaticRow as degree}
+									<Button
+										variant={melodyAllowedDegrees.includes(degree) ? 'default' : 'secondary'}
+										onclick={() => toggleMelodyDegree(degree)}
+									>
+										{labelForMelodyDegree(degree)}
+									</Button>
+								{/each}
+							</div>
+						</div>
+					</Card.Content>
+				</Card.Root>
+			</aside>
+
+			<main class="order-1 space-y-6 lg:order-none">
+				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-xl">
+					<Card.Header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+						<div>
+							<Card.Title class="font-display text-xl">Melody Trainer</Card.Title>
+							<Card.Description>
+								{melodyMode === 'interactive'
+									? 'Listen once, then tap the phrase.'
+									: 'Looped phrases with a rotating key center.'}
+							</Card.Description>
+						</div>
+						<div class="flex items-center gap-3">
+							<Badge variant="secondary" class="text-xs">Key {melodyKeyLabel}</Badge>
+							<Badge variant={melodyStage === 'playing' ? 'default' : 'secondary'} class="text-xs">
+								{melodyStage === 'count-in'
+									? 'Count-in'
+									: melodyStage === 'playing'
+										? 'Playing'
+										: melodyStage === 'rest'
+											? 'Rest'
+											: 'Idle'}
+							</Badge>
+							<Button onclick={toggleMelodyPlayback} class="px-5">
+								{melodyPlaying ? 'Stop' : 'Play'}
+							</Button>
+						</div>
+					</Card.Header>
+					<Card.Content class="space-y-6">
+						<div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+							<span class="rounded-full border border-border/70 bg-background/60 px-3 py-1">
+								Key {melodyKeyLabel} · {melodyKeyMode}
+							</span>
+							<span class="rounded-full border border-border/70 bg-background/60 px-3 py-1">
+								{melodyPhraseLength} notes · max leap {melodyMaxLeap}
+							</span>
+							<span class="rounded-full border border-border/70 bg-background/60 px-3 py-1">
+								{melodyRepresentation === 'solfege' ? 'Solfege' : 'Numbers'}
+							</span>
+							{#if melodyAutoAdvanceKey && melodyNextKeyLabel}
+								<span class="rounded-full border border-border/70 bg-background/60 px-3 py-1">
+									Next key {melodyNextKeyLabel}
+								</span>
+							{/if}
+						</div>
+						<div class="flex flex-wrap items-center gap-2">
+							<ToggleGroup.Root type="single" bind:value={melodyPracticeMode} class="flex gap-2">
+								<ToggleGroup.Item value="phrase" class="px-3 text-xs">Phrase</ToggleGroup.Item>
+								<ToggleGroup.Item value="scale" class="px-3 text-xs">Scale color</ToggleGroup.Item>
+								<ToggleGroup.Item value="single" class="px-3 text-xs">Single note</ToggleGroup.Item>
+							</ToggleGroup.Root>
+						</div>
+						<div class="h-2 w-full rounded-full bg-border/60">
+							<div
+								class="h-full rounded-full bg-primary/70 transition-all"
+								style={`width: ${melodyProgressPercent}%;`}
+							></div>
+						</div>
+
+						{#if melodyPracticeMode === 'phrase' && melodyMode === 'interactive'}
+							<div class="space-y-4">
+								<div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+									<span class="text-xs text-muted-foreground">Representation</span>
+									<ToggleGroup.Root type="single" bind:value={melodyRepresentation} class="flex gap-2">
+										<ToggleGroup.Item value="solfege" class="px-3 text-xs">Solfege</ToggleGroup.Item>
+										<ToggleGroup.Item value="numbers" class="px-3 text-xs">Numbers</ToggleGroup.Item>
+									</ToggleGroup.Root>
+								</div>
+								<div class="grid grid-cols-4 gap-2">
+									{#each Array.from({ length: melodyPhraseLength }) as _, index}
+										<div
+											class={`rounded-lg border border-border/60 px-2 py-3 text-center text-sm font-semibold uppercase tracking-wide ${
+												melodyStep === index && melodyStage === 'playing'
+													? 'bg-[var(--surface-2)] text-foreground'
+													: 'text-muted-foreground'
+											}`}
+										>
+									{melodyInput[index] ? labelForMelodyDegree(melodyInput[index]) : '·'}
+								</div>
+							{/each}
+						</div>
+						<div class="grid grid-cols-7 gap-2">
+							{#each melodyDiatonicSelected as degree}
+								<Button
+									variant="secondary"
+									onclick={() => onTapMelodyDegree(degree)}
+								>
+									{labelForMelodyDegree(degree)}
+								</Button>
+							{/each}
+						</div>
+						<div class="grid grid-cols-9 gap-2">
+							{#each melodyChromaticSelected as degree}
+								<Button
+									variant="secondary"
+									onclick={() => onTapMelodyDegree(degree)}
+								>
+									{labelForMelodyDegree(degree)}
+								</Button>
+							{/each}
+						</div>
+								<div class="flex flex-wrap items-center gap-2">
+									<Button onclick={submitMelody}>Submit</Button>
+									<Button variant="secondary" onclick={backspaceMelodyInput}>
+										Backspace
+									</Button>
+									<Button variant="secondary" onclick={clearMelodyInput}>
+										Clear
+									</Button>
+									<Button variant="ghost" onclick={() => (melodyReveal = !melodyReveal)}>
+										{melodyReveal ? 'Hide' : 'Reveal'}
+									</Button>
+									<Button variant="ghost" onclick={generateMelodyPhrase}>
+										New phrase
+									</Button>
+								</div>
+								{#if melodyFeedback !== 'idle'}
+									<div
+										class={`rounded-lg border border-border/60 px-3 py-2 text-sm ring-1 ${
+											melodyFeedback === 'correct'
+												? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
+												: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
+										}`}
+									>
+										{melodyFeedback === 'correct'
+											? 'Correct. Sing it once more.'
+											: 'Not quite. Try again or reveal.'}
+									</div>
+								{/if}
+								{#if melodyReveal}
+									<div class="rounded-lg border border-border/60 bg-[var(--surface-2)] px-3 py-2 text-sm text-muted-foreground">
+										Answer: {melodyDegrees
+											.map((degree) =>
+												labelForMelodyDegree(degree)
+											)
+											.join(' · ')}
+									</div>
+							{/if}
+						</div>
+						{:else if melodyPracticeMode === 'phrase'}
+							<div class="space-y-4">
+								<div class="grid grid-cols-7 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									{#each melodyDegrees as degree, index}
+										<div
+											class={`rounded-lg border border-border/60 px-2 py-3 ${
+												melodyStep === index && melodyStage === 'playing'
+													? 'bg-[var(--surface-2)] text-foreground'
+													: 'bg-transparent'
+											}`}
+										>
+									{labelForMelodyDegree(degree)}
+								</div>
+							{/each}
+						</div>
+								<div class="rounded-lg border border-border/60 bg-[var(--surface-2)] px-3 py-2 text-sm text-muted-foreground">
+									Auto-advance key is {melodyAutoAdvanceKey ? 'on' : 'off'}. New phrases rotate every loop.
+								</div>
+							</div>
+						{:else if melodyPracticeMode === 'scale'}
+							<div class="space-y-4">
+								<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+									<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
+									<div class="mt-2 text-sm">Which scale color is this over the tonic drone?</div>
+									<div class="mt-4 flex flex-wrap gap-2">
+										{#each melodyScaleChoices as choice}
+											<Button variant="secondary" onclick={() => submitMelodyScale(choice)}>
+												{SCALE_LABELS[choice]}
+											</Button>
+										{/each}
+									</div>
+									{#if melodyScaleFeedback !== 'idle'}
+										<div
+											class={`mt-4 rounded-lg border border-border/60 px-3 py-2 text-sm ring-1 ${
+												melodyScaleFeedback === 'correct'
+													? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
+													: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
+											}`}
+										>
+											{melodyScaleFeedback === 'correct'
+												? 'Correct. Listen for that color again.'
+												: 'Not quite. It was ' + labelForMelodyScale(melodyScaleCorrect) + '.'}
+										</div>
+									{/if}
+								</div>
+							</div>
+						{:else}
+							<div class="space-y-4">
+								<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+									<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
+									<div class="mt-2 text-sm">Same pitch, new key. What is this note's function now?</div>
+									<div class="mt-4 flex flex-wrap gap-2">
+										{#each melodySingleChoices as choice}
+											<Button variant="secondary" onclick={() => submitMelodySingle(choice)}>
+												{labelForMelodyDegree(choice)}
+											</Button>
+										{/each}
+									</div>
+									{#if melodySingleFeedback !== 'idle'}
+										<div
+											class={`mt-4 rounded-lg border border-border/60 px-3 py-2 text-sm ring-1 ${
+												melodySingleFeedback === 'correct'
+													? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
+													: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
+											}`}
+										>
+											{melodySingleFeedback === 'correct'
+												? 'Correct. Hear how the note\'s role shifts.'
+												: 'Not quite. It was ' + labelForMelodyDegree(melodySingleCorrect) + '.'}
+										</div>
+									{/if}
+								</div>
+							</div>
+						{/if}
 					</Card.Content>
 				</Card.Root>
 			</main>
@@ -1825,6 +2683,34 @@ const floorSyllables: Record<number, string[]> = {
 				<Button size="sm" variant="secondary" onclick={advanceHarmonyKey}>
 					Advance
 				</Button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if phase === 'melody'}
+	<div class="fixed inset-x-4 bottom-4 z-40 lg:hidden">
+		<div class="rounded-2xl border border-border/70 bg-card/95 px-4 py-3 shadow-xl backdrop-blur">
+			<div class="flex items-center justify-between gap-3">
+				<Button class="px-6" onclick={toggleMelodyPlayback}>
+					{melodyPlaying ? 'Stop' : 'Play'}
+				</Button>
+				<Button variant="secondary" onclick={() => (melodyMode = melodyMode === 'interactive' ? 'passive' : 'interactive')}>
+					{melodyMode === 'interactive' ? 'Interactive' : 'Passive'}
+				</Button>
+				<Button
+					variant="secondary"
+					onclick={() => (melodyRepresentation = melodyRepresentation === 'solfege' ? 'numbers' : 'solfege')}
+				>
+					{melodyRepresentation === 'solfege' ? 'Solfege' : 'Numbers'}
+				</Button>
+			</div>
+			<div class="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+				<span>Key: {melodyKeyLabel}</span>
+				<div class="flex items-center gap-2" onclick={() => void unlockMelodyAudio()}>
+					<span>Drone</span>
+					<Switch bind:checked={melodyDroneOn} />
+				</div>
 			</div>
 		</div>
 	</div>

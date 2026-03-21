@@ -46,6 +46,7 @@
 	},
 	"dependencies": {
 		"@fontsource-variable/sora": "^5.2.8",
-		"@fontsource/ibm-plex-sans": "^5.2.8"
+		"@fontsource/ibm-plex-sans": "^5.2.8",
+		"tone": "^15.1.22"
 	}
 }

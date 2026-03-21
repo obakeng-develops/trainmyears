@@ -15,58 +15,78 @@
 	<header class="sticky top-0 z-40 hidden border-b border-border/60 bg-background/70 px-6 py-4 backdrop-blur md:block lg:px-10">
 		<div class="mx-auto flex max-w-6xl flex-col gap-3">
 			<div class="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">Train My Ears</div>
-			<nav class="flex w-full items-center gap-3 overflow-x-auto text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-				<a
-					class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
-						isActive('/') ? 'bg-primary/10 text-foreground' : 'hover:text-foreground'
-					}`}
-					href="/"
-				>
-					Start
-				</a>
-				<a
-					class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
-						isSection('/rhythm') && !isSection('/rhythm/advanced')
-							? 'bg-primary/10 text-foreground'
-							: 'hover:text-foreground'
-					}`}
-					href="/rhythm"
-				>
-					Rhythm
-				</a>
-				<a
-					class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
-						isSection('/harmony') && !isSection('/harmony/advanced')
-							? 'bg-primary/10 text-foreground'
-							: 'hover:text-foreground'
-					}`}
-					href="/harmony"
-				>
-					Harmony
-				</a>
-				<a
-					class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
-						isSection('/rhythm/advanced')
-							? 'bg-primary/10 text-foreground'
-							: 'hover:text-foreground'
-					}`}
+		<nav class="flex w-full items-center gap-3 overflow-x-auto text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+			<a
+				class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
+					isActive('/') ? 'bg-primary/10 text-foreground' : 'hover:text-foreground'
+				}`}
+				href="/"
+			>
+				Start
+			</a>
+			<a
+				class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
+					isSection('/rhythm') && !isSection('/rhythm/advanced')
+						? 'bg-primary/10 text-foreground'
+						: 'hover:text-foreground'
+				}`}
+				href="/rhythm"
+			>
+				Rhythm
+			</a>
+			<a
+				class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
+					isSection('/harmony') && !isSection('/harmony/advanced')
+						? 'bg-primary/10 text-foreground'
+						: 'hover:text-foreground'
+				}`}
+				href="/harmony"
+			>
+				Harmony
+			</a>
+			<a
+				class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
+					isSection('/melody') && !isSection('/melody/advanced')
+						? 'bg-primary/10 text-foreground'
+						: 'hover:text-foreground'
+				}`}
+				href="/melody"
+			>
+				Melody
+			</a>
+			<a
+				class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
+					isSection('/rhythm/advanced')
+						? 'bg-primary/10 text-foreground'
+						: 'hover:text-foreground'
+				}`}
 					href="/rhythm/advanced"
 				>
 					Rhythm Advanced
 				</a>
-				<a
-					class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
-						isSection('/harmony/advanced')
-							? 'bg-primary/10 text-foreground'
-							: 'hover:text-foreground'
-					}`}
-					href="/harmony/advanced"
-				>
-					Harmony Advanced
-				</a>
-			</nav>
-		</div>
-	</header>
+			<a
+				class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
+					isSection('/harmony/advanced')
+						? 'bg-primary/10 text-foreground'
+						: 'hover:text-foreground'
+				}`}
+				href="/harmony/advanced"
+			>
+				Harmony Advanced
+			</a>
+			<a
+				class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
+					isSection('/melody/advanced')
+						? 'bg-primary/10 text-foreground'
+						: 'hover:text-foreground'
+				}`}
+				href="/melody/advanced"
+			>
+				Melody Advanced
+			</a>
+		</nav>
+	</div>
+</header>
 
 	{#key $page.url.pathname}
 		<div class="pb-24 md:pb-0">
@@ -120,13 +140,31 @@
 			</a>
 			<a
 				class={`flex flex-col items-center gap-1 ${
-					isSection('/rhythm/advanced') || isSection('/harmony/advanced')
+					isSection('/melody') && !isSection('/melody/advanced')
+						? 'text-foreground'
+						: 'hover:text-foreground'
+				}`}
+				href="/melody"
+				aria-current={isSection('/melody') && !isSection('/melody/advanced') ? 'page' : undefined}
+			>
+				<span>Melody</span>
+				<span
+					class={`h-1 w-1 rounded-full ${
+						isSection('/melody') && !isSection('/melody/advanced') ? 'bg-primary' : 'bg-transparent'
+					}`}
+				></span>
+			</a>
+			<a
+				class={`flex flex-col items-center gap-1 ${
+					isSection('/rhythm/advanced') || isSection('/harmony/advanced') || isSection('/melody/advanced')
 						? 'text-foreground'
 						: 'hover:text-foreground'
 				}`}
 				href="/rhythm/advanced"
 				aria-current={
-					isSection('/rhythm/advanced') || isSection('/harmony/advanced') ? 'page' : undefined
+					isSection('/rhythm/advanced') || isSection('/harmony/advanced') || isSection('/melody/advanced')
+						? 'page'
+						: undefined
 				}
 			>
 				<span>Advanced</span>

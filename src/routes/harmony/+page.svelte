@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { HarmonyEngine, type TriadType } from '$lib/harmony/engine';
+	import { HarmonyEngine, type ChordQuality, type TriadType } from '$lib/harmony/engine';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
@@ -35,12 +35,20 @@
 		'major',
 		'major'
 	];
+	const majorSevenths: ChordQuality[] = ['maj7', 'min7', 'min7', 'maj7', 'dom7', 'min7', 'm7b5'];
+	const minorSevenths: ChordQuality[] = ['min7', 'm7b5', 'maj7', 'min7', 'min7', 'maj7', 'dom7'];
 	const majorScaleOffsets = [0, 2, 4, 5, 7, 9, 11];
 	const minorScaleOffsets = [0, 2, 3, 5, 7, 8, 10];
 
 	let key = $state('0');
 	let mode = $state<'major' | 'minor'>('major');
 	let func = $state('I');
+	let chordSet = $state<'triads' | 'sevenths'>('triads');
+	let trainingMode = $state<'loop' | 'trainer'>('loop');
+	let trainerPath = $state('home-pull');
+	let trainerChoices = $state<{ label: string; degreeIndex: number }[]>([]);
+	let trainerCorrect = $state(-1);
+	let trainerFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
 	let droneOn = $state(true);
 	let droneVolume = $state(35);
 	let droneBlend = $state(40);
@@ -62,6 +70,8 @@
 		(Number(key) + (mode === 'major' ? majorScaleOffsets[functionIndex] : minorScaleOffsets[functionIndex])) % 12
 	);
 	const derivedTriad = $derived(mode === 'major' ? majorQualities[functionIndex] : minorQualities[functionIndex]);
+	const derivedSeventh = $derived(mode === 'major' ? majorSevenths[functionIndex] : minorSevenths[functionIndex]);
+	const derivedQuality = $derived(chordSet === 'triads' ? derivedTriad : derivedSeventh);
 	const inversionLabel = $derived(inversion === 0 ? 'Root position' : inversion === 1 ? '1st inversion' : '2nd inversion');
 	const isListening = $derived(repeatOn || droneOn);
 
@@ -78,8 +88,89 @@
 	const playChordInternal = () => {
 		const next = Math.floor(Math.random() * 3) as 0 | 1 | 2;
 		inversion = next;
-		engine.playChord({ rootPc, triad: derivedTriad, inversion: next });
+		engine.playChord({ rootPc, quality: derivedQuality, inversion: next });
 		if (quizMode) reveal = false;
+	};
+
+	const trainerPaths = [
+		{
+			id: 'home-pull',
+			label: 'Home vs Pull (I / V)',
+			choices: [
+				{ label: 'Home', degreeIndex: 0 },
+				{ label: 'Pull', degreeIndex: 4 }
+			],
+			prompt: 'Which feels most resolved?'
+		},
+		{
+			id: 'home-away',
+			label: 'Home vs Away (I / IV)',
+			choices: [
+				{ label: 'Home', degreeIndex: 0 },
+				{ label: 'Away', degreeIndex: 3 }
+			],
+			prompt: 'Which feels farther from home?'
+		},
+		{
+			id: 'away-pull',
+			label: 'Away vs Pull (IV / V)',
+			choices: [
+				{ label: 'Away', degreeIndex: 3 },
+				{ label: 'Pull', degreeIndex: 4 }
+			],
+			prompt: 'Which wants to resolve?'
+		},
+		{
+			id: 'home-away-pull',
+			label: 'Home / Away / Pull (I / IV / V)',
+			choices: [
+				{ label: 'Home', degreeIndex: 0 },
+				{ label: 'Away', degreeIndex: 3 },
+				{ label: 'Pull', degreeIndex: 4 }
+			],
+			prompt: 'Which label matches the chord you heard?'
+		}
+	];
+
+	const trainerPathConfig = $derived(
+		trainerPaths.find((path) => path.id === trainerPath) ?? trainerPaths[0]
+	);
+
+	const playTrainerSequence = async () => {
+		await unlockAudio();
+		trainerFeedback = 'idle';
+		const choices = [...trainerPathConfig.choices].sort(() => Math.random() - 0.5);
+		trainerChoices = choices;
+		const correct = choices[Math.floor(Math.random() * choices.length)];
+		trainerCorrect = correct.degreeIndex;
+		const sequence = choices.map((choice) => choice.degreeIndex);
+		let index = 0;
+		const playNext = () => {
+			const funcIndex = sequence[index];
+			if (funcIndex === undefined) return;
+			const derivedRoot =
+				(Number(key) + (mode === 'major' ? majorScaleOffsets[funcIndex] : minorScaleOffsets[funcIndex])) % 12;
+			const quality =
+				chordSet === 'triads'
+					? mode === 'major'
+						? majorQualities[funcIndex]
+						: minorQualities[funcIndex]
+					: mode === 'major'
+						? majorSevenths[funcIndex]
+						: minorSevenths[funcIndex];
+			const next = Math.floor(Math.random() * 3) as 0 | 1 | 2;
+			inversion = next;
+			engine.playChord({ rootPc: derivedRoot, quality, inversion: next });
+			index += 1;
+			if (index < sequence.length) {
+				setTimeout(playNext, 1400);
+			}
+		};
+		playNext();
+	};
+
+	const submitTrainer = (choice: number) => {
+		trainerFeedback = choice === trainerCorrect ? 'correct' : 'incorrect';
 	};
 
 	const playChord = async () => {
@@ -130,6 +221,13 @@
 		if (!audioReady) return;
 		if (repeatOn) startRepeat();
 		else stopRepeat();
+	});
+
+	$effect(() => {
+		if (trainingMode === 'trainer' && repeatOn) {
+			repeatOn = false;
+			stopRepeat();
+		}
 	});
 
 	$effect(() => {
@@ -208,12 +306,18 @@
 		<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
 			<Card.Header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 				<div>
-					<Card.Title class="font-display text-2xl">Listen loop</Card.Title>
+					<Card.Title class="font-display text-2xl">
+						{trainingMode === 'loop' ? 'Listen loop' : 'Function trainer'}
+					</Card.Title>
 					<Card.Description class="text-base">
-						Let the drone anchor the key while chords repeat.
+						{trainingMode === 'loop'
+							? 'Let the drone anchor the key while chords repeat.'
+							: trainerPathConfig.prompt}
 					</Card.Description>
 					<div class="mt-2 text-sm text-muted-foreground">
-						Triad quality is derived from the function in the selected mode.
+						{chordSet === 'triads'
+							? 'Triad quality follows the function in the selected mode.'
+							: '7th chord quality follows the function in the selected mode.'}
 					</div>
 				</div>
 				<div class="flex items-center gap-3">
@@ -233,40 +337,112 @@
 								style={`animation: harmony-pulse ${repeatSeconds}s ease-out infinite;`}
 							></span>
 						{/if}
-						<Button onclick={() => void playChord()} class="relative px-5">Play now</Button>
+						<Button
+							onclick={() =>
+								trainingMode === 'trainer'
+									? void playTrainerSequence()
+									: void playChord()
+							}
+							class="relative px-5"
+						>
+							{trainingMode === 'trainer' ? 'Play set' : 'Play now'}
+						</Button>
 					</div>
-					<Button variant="secondary" onclick={stopLoop}>
-						Stop loop
-					</Button>
+					{#if trainingMode === 'loop'}
+						<Button variant="secondary" onclick={stopLoop}>
+							Stop loop
+						</Button>
+					{/if}
 					<Button variant="ghost" onclick={stopAll}>
 						Stop all
 					</Button>
 				</div>
 			</Card.Header>
-			<Card.Content>
-				<div class="grid gap-4 md:grid-cols-3">
-					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Function</div>
-						<div class="text-sm font-semibold">{quizMode && !reveal ? 'Hidden' : func}</div>
-						<div class="text-xs text-muted-foreground">{mode} mode</div>
-					</div>
-					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Triad</div>
-						<div class="text-sm font-semibold">{quizMode && !reveal ? 'Hidden' : derivedTriad}</div>
-						<div class="text-xs text-muted-foreground">Random inversion</div>
-					</div>
-					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Inversion</div>
-						{#if quizMode && !reveal}
-							<div class="text-sm font-semibold">Hidden</div>
-							<Button size="sm" variant="secondary" class="mt-2" onclick={() => (reveal = true)}>
-								Reveal
-							</Button>
-						{:else}
-							<div class="text-sm font-semibold">{inversionLabel}</div>
+			<Card.Content class="space-y-6">
+				<div class="flex flex-wrap items-center gap-2">
+					<ToggleGroup.Root type="single" bind:value={trainingMode} class="flex gap-2">
+						<ToggleGroup.Item value="loop" class="px-3 text-xs">Listen loop</ToggleGroup.Item>
+						<ToggleGroup.Item value="trainer" class="px-3 text-xs">Function trainer</ToggleGroup.Item>
+					</ToggleGroup.Root>
+					<ToggleGroup.Root type="single" bind:value={chordSet} class="flex gap-2">
+						<ToggleGroup.Item value="triads" class="px-3 text-xs">Triads</ToggleGroup.Item>
+						<ToggleGroup.Item value="sevenths" class="px-3 text-xs">7ths</ToggleGroup.Item>
+					</ToggleGroup.Root>
+					{#if trainingMode === 'trainer'}
+						<Select.Root type="single" bind:value={trainerPath as never}>
+							<Select.Trigger class="h-8 w-[220px]">
+								<span>{trainerPathConfig.label}</span>
+							</Select.Trigger>
+							<Select.Content>
+								{#each trainerPaths as path}
+									<Select.Item value={path.id}>{path.label}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					{/if}
+				</div>
+
+				{#if trainingMode === 'trainer'}
+					<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+							What to listen for
+						</div>
+						<div class="mt-2 text-sm">
+							{trainerPathConfig.prompt}
+						</div>
+						<div class="mt-4 flex flex-wrap gap-2">
+							{#each trainerChoices as choice}
+								<Button
+									variant="secondary"
+									onclick={() => submitTrainer(choice.degreeIndex)}
+								>
+									{choice.label}
+								</Button>
+							{/each}
+						</div>
+						{#if trainerFeedback !== 'idle'}
+							<div
+								class={`mt-4 rounded-lg border border-border/60 px-3 py-2 text-sm ring-1 ${
+									trainerFeedback === 'correct'
+										? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
+										: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
+								}`}
+							>
+								{trainerFeedback === 'correct'
+									? 'Correct. Listen for that feeling again.'
+									: 'Not quite. Replay and listen for the pull.'}
+							</div>
 						{/if}
 					</div>
-				</div>
+				{:else}
+					<div class="grid gap-4 md:grid-cols-3">
+						<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Function</div>
+							<div class="text-sm font-semibold">{quizMode && !reveal ? 'Hidden' : func}</div>
+							<div class="text-xs text-muted-foreground">{mode} mode</div>
+						</div>
+						<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+								{chordSet === 'triads' ? 'Triad' : '7th chord'}
+							</div>
+							<div class="text-sm font-semibold">
+								{quizMode && !reveal ? 'Hidden' : derivedQuality}
+							</div>
+							<div class="text-xs text-muted-foreground">Random inversion</div>
+						</div>
+						<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Inversion</div>
+							{#if quizMode && !reveal}
+								<div class="text-sm font-semibold">Hidden</div>
+								<Button size="sm" variant="secondary" class="mt-2" onclick={() => (reveal = true)}>
+									Reveal
+								</Button>
+							{:else}
+								<div class="text-sm font-semibold">{inversionLabel}</div>
+							{/if}
+						</div>
+					</div>
+				{/if}
 			</Card.Content>
 		</Card.Root>
 
@@ -302,6 +478,13 @@
 							</ToggleGroup.Item>
 						{/each}
 					</ToggleGroup.Root>
+					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+						<span class="text-xs text-muted-foreground">Chord set</span>
+						<ToggleGroup.Root type="single" bind:value={chordSet} class="flex gap-2">
+							<ToggleGroup.Item value="triads" class="px-3 text-xs">Triads</ToggleGroup.Item>
+							<ToggleGroup.Item value="sevenths" class="px-3 text-xs">7ths</ToggleGroup.Item>
+						</ToggleGroup.Root>
+					</div>
 					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
 						<span class="text-xs text-muted-foreground">Quiz mode</span>
 						<Switch bind:checked={quizMode} />
