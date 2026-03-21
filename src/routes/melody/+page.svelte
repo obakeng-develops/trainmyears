@@ -107,6 +107,7 @@
 	let mode = $state<(typeof modeOptions)[number]>('interactive');
 	let practiceMode = $state<'phrase' | 'scale' | 'single'>('phrase');
 	let scaleMode = $state<(typeof SCALE_OPTIONS)[number]>('major');
+	let showScaleNames = $state(false);
 	let scaleChoices = $state<(typeof SCALE_OPTIONS)[number][]>([]);
 	let scaleCorrect = $state<(typeof SCALE_OPTIONS)[number] | ''>('');
 	let scaleFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
@@ -200,6 +201,8 @@
 		representation === 'solfege' ? solfegeMap[degree] ?? degree : degree;
 	const labelForScale = (scale: (typeof SCALE_OPTIONS)[number] | '') =>
 		scale ? SCALE_LABELS[scale] : '';
+	const labelForScaleChoice = (scale: (typeof SCALE_OPTIONS)[number], index: number) =>
+		showScaleNames ? SCALE_LABELS[scale] : `Option ${index + 1}`;
 
 	const shuffle = <T,>(items: T[]) => [...items].sort(() => Math.random() - 0.5);
 
@@ -353,6 +356,7 @@
 					mode: (typeof modeOptions)[number];
 					practiceMode: 'phrase' | 'scale' | 'single';
 					scaleMode: (typeof SCALE_OPTIONS)[number];
+					showScaleNames: boolean;
 					representation: (typeof representationOptions)[number];
 					key: string;
 					keyMode: 'major' | 'minor';
@@ -367,6 +371,7 @@
 				if (saved.mode) mode = saved.mode;
 				if (saved.practiceMode) practiceMode = saved.practiceMode;
 				if (saved.scaleMode) scaleMode = saved.scaleMode;
+				if (typeof saved.showScaleNames === 'boolean') showScaleNames = saved.showScaleNames;
 				if (saved.representation) representation = saved.representation;
 				if (typeof saved.key === 'string') key = saved.key;
 				if (saved.keyMode) keyMode = saved.keyMode;
@@ -400,6 +405,7 @@
 				mode,
 				practiceMode,
 				scaleMode,
+				showScaleNames,
 				representation,
 				key,
 				keyMode,
@@ -649,9 +655,9 @@
 								Which scale color is this over the tonic drone?
 							</div>
 							<div class="mt-4 flex flex-wrap gap-2">
-								{#each scaleChoices as choice}
+								{#each scaleChoices as choice, index}
 									<Button variant="secondary" onclick={() => submitScale(choice)}>
-										{SCALE_LABELS[choice]}
+										{labelForScaleChoice(choice, index)}
 									</Button>
 								{/each}
 							</div>
@@ -776,6 +782,10 @@
 									</ToggleGroup.Item>
 								{/each}
 							</ToggleGroup.Root>
+						</div>
+						<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<span class="text-xs text-muted-foreground">Show scale names</span>
+							<Switch bind:checked={showScaleNames} />
 						</div>
 					{/if}
 				</div>

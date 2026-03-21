@@ -43,12 +43,19 @@
 	let key = $state('0');
 	let mode = $state<'major' | 'minor'>('major');
 	let func = $state('I');
+	let trainerFocus = $state<'function' | 'context'>('function');
+	let showTheory = $state(false);
 	let chordSet = $state<'triads' | 'sevenths'>('triads');
 	let trainingMode = $state<'loop' | 'trainer'>('loop');
 	let trainerPath = $state('home-pull');
 	let trainerChoices = $state<{ label: string; degreeIndex: number }[]>([]);
 	let trainerCorrect = $state(-1);
 	let trainerFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
+	let contextKey = $state('0');
+	let contextChordRoot = $state('0');
+	let contextQuality = $state<ChordQuality>('major');
+	let contextFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
+	let contextCorrect = $state<'Settled' | 'Tilted' | 'Pulling'>('Settled');
 	let droneOn = $state(true);
 	let droneVolume = $state(35);
 	let droneBlend = $state(40);
@@ -73,7 +80,22 @@
 	const derivedTriad = $derived(mode === 'major' ? majorQualities[functionIndex] : minorQualities[functionIndex]);
 	const derivedSeventh = $derived(mode === 'major' ? majorSevenths[functionIndex] : minorSevenths[functionIndex]);
 	const derivedQuality = $derived(chordSet === 'triads' ? derivedTriad : derivedSeventh);
-	const nowHearing = $derived(`${func} in ${keyLabel} → ${rootLabel} ${derivedQuality}`);
+	const feelForFunction = (index: number) => {
+		if (index === 0) return 'Settled';
+		if (index === 4 || index === 6) return 'Pulling';
+		return 'Tilted';
+	};
+	const nowHearing = $derived(
+		showTheory
+			? `${func} in ${keyLabel} → ${rootLabel} ${derivedQuality}`
+			: `${feelForFunction(functionIndex)} in ${keyLabel}`
+	);
+	const contextRootLabel = $derived(
+		harmonyKeys.find((item) => String(item.pc) === contextChordRoot)?.label ?? 'C'
+	);
+	const contextNowHearing = $derived(
+		`${contextRootLabel} ${contextQuality} in ${harmonyKeys.find((item) => String(item.pc) === contextKey)?.label ?? 'C'}`
+	);
 	const inversionLabel = $derived(inversion === 0 ? 'Root position' : inversion === 1 ? '1st inversion' : '2nd inversion');
 	const isListening = $derived(repeatOn || droneOn);
 
@@ -173,6 +195,20 @@
 
 	const submitTrainer = (choice: number) => {
 		trainerFeedback = choice === trainerCorrect ? 'correct' : 'incorrect';
+	};
+
+	const playContextChord = async () => {
+		await unlockAudio();
+		const basePc = Number(contextKey);
+		const chordPc = Number(contextChordRoot);
+		const offset = (chordPc - basePc + 12) % 12;
+		contextCorrect = offset === 0 ? 'Settled' : offset === 7 || offset === 11 ? 'Pulling' : 'Tilted';
+		contextFeedback = 'idle';
+		engine.playChord({ rootPc: chordPc, quality: contextQuality, inversion: 0 });
+	};
+
+	const submitContext = (choice: 'Settled' | 'Tilted' | 'Pulling') => {
+		contextFeedback = choice === contextCorrect ? 'correct' : 'incorrect';
 	};
 
 	const playChord = async () => {
@@ -313,8 +349,10 @@
 					</Card.Title>
 					<Card.Description class="text-base">
 						{trainingMode === 'loop'
-							? 'Let the tonic anchor the key while chords repeat.'
-							: trainerPathConfig.prompt}
+							? 'Let the home base anchor the key while chords repeat.'
+							: trainerFocus === 'function'
+								? trainerPathConfig.prompt
+								: 'Same chord, different home base. What does it feel like now?'}
 					</Card.Description>
 					<div class="mt-2 text-sm text-muted-foreground">
 						{chordSet === 'triads'
@@ -326,7 +364,7 @@
 					</div>
 				</div>
 				<div class="flex items-center gap-3">
-					<Badge variant="secondary" class="text-xs">Tonic {keyLabel}</Badge>
+					<Badge variant="secondary" class="text-xs">Home base {keyLabel}</Badge>
 					<Badge variant={isListening ? 'default' : 'secondary'} class="text-xs">
 						{isListening ? 'Listening' : 'Idle'}
 					</Badge>
@@ -369,11 +407,17 @@
 						<ToggleGroup.Item value="loop" class="px-3 text-xs">Listen loop</ToggleGroup.Item>
 						<ToggleGroup.Item value="trainer" class="px-3 text-xs">Function trainer</ToggleGroup.Item>
 					</ToggleGroup.Root>
+					{#if trainingMode === 'trainer'}
+						<ToggleGroup.Root type="single" bind:value={trainerFocus} class="flex gap-2">
+							<ToggleGroup.Item value="function" class="px-3 text-xs">Feel in key</ToggleGroup.Item>
+							<ToggleGroup.Item value="context" class="px-3 text-xs">Chord in new key</ToggleGroup.Item>
+						</ToggleGroup.Root>
+					{/if}
 					<ToggleGroup.Root type="single" bind:value={chordSet} class="flex gap-2">
 						<ToggleGroup.Item value="triads" class="px-3 text-xs">Triads</ToggleGroup.Item>
 						<ToggleGroup.Item value="sevenths" class="px-3 text-xs">7ths</ToggleGroup.Item>
 					</ToggleGroup.Root>
-					{#if trainingMode === 'trainer'}
+					{#if trainingMode === 'trainer' && trainerFocus === 'function'}
 						<Select.Root type="single" bind:value={trainerPath as never}>
 							<Select.Trigger class="h-8 w-[220px]">
 								<span>{trainerPathConfig.label}</span>
@@ -387,7 +431,7 @@
 					{/if}
 				</div>
 
-				{#if trainingMode === 'trainer'}
+				{#if trainingMode === 'trainer' && trainerFocus === 'function'}
 					<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
 						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 							What to listen for
@@ -419,11 +463,90 @@
 							</div>
 						{/if}
 					</div>
+				{:else if trainingMode === 'trainer' && trainerFocus === 'context'}
+					<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+							Chord in another key
+						</div>
+						<div class="mt-2 text-sm text-muted-foreground">
+							Chord you’re hearing: {contextNowHearing}
+						</div>
+						<div class="mt-4 grid gap-3 md:grid-cols-3">
+							<div>
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									Home base
+								</div>
+								<Select.Root type="single" bind:value={contextKey as never}>
+									<Select.Trigger class="mt-2 w-full">
+										<span>{harmonyKeys.find((item) => String(item.pc) === contextKey)?.label ?? 'C'}</span>
+									</Select.Trigger>
+									<Select.Content>
+										{#each harmonyKeys as keyOption}
+											<Select.Item value={String(keyOption.pc)}>{keyOption.label}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+							<div>
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									Chord root
+								</div>
+								<Select.Root type="single" bind:value={contextChordRoot as never}>
+									<Select.Trigger class="mt-2 w-full">
+										<span>{contextRootLabel}</span>
+									</Select.Trigger>
+									<Select.Content>
+										{#each harmonyKeys as keyOption}
+											<Select.Item value={String(keyOption.pc)}>{keyOption.label}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+							<div>
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									Chord quality
+								</div>
+								<Select.Root type="single" bind:value={contextQuality as never}>
+									<Select.Trigger class="mt-2 w-full">
+										<span>{contextQuality}</span>
+									</Select.Trigger>
+									<Select.Content>
+										{#each ['major','minor','diminished','augmented','maj7','dom7','min7','m7b5','dim7'] as quality}
+											<Select.Item value={quality}>{quality}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+						</div>
+						<div class="mt-4 flex flex-wrap items-center gap-2">
+							<Button onclick={() => void playContextChord()}>Play chord</Button>
+							<Button variant="secondary" onclick={() => submitContext('Settled')}>Settled</Button>
+							<Button variant="secondary" onclick={() => submitContext('Tilted')}>Tilted</Button>
+							<Button variant="secondary" onclick={() => submitContext('Pulling')}>Pulling</Button>
+						</div>
+						{#if contextFeedback !== 'idle'}
+							<div
+								class={`mt-3 rounded-lg border border-border/60 px-3 py-2 text-sm ring-1 ${
+									contextFeedback === 'correct'
+										? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
+										: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
+								}`}
+							>
+								{contextFeedback === 'correct'
+									? 'Correct. Notice how the home base shifts the feel.'
+									: 'Not quite. Replay and feel the pull.'}
+							</div>
+						{/if}
+					</div>
 				{:else}
 					<div class="grid gap-4 md:grid-cols-3">
 						<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Function</div>
-							<div class="text-sm font-semibold">{quizMode && !reveal ? 'Hidden' : func}</div>
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+								{showTheory ? 'Function' : 'Role / Feel'}
+							</div>
+							<div class="text-sm font-semibold">
+								{showTheory ? (quizMode && !reveal ? 'Hidden' : func) : feelForFunction(functionIndex)}
+							</div>
 							<div class="text-xs text-muted-foreground">{mode} mode</div>
 						</div>
 						<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
@@ -431,7 +554,7 @@
 								{chordSet === 'triads' ? 'Triad' : '7th chord'}
 							</div>
 							<div class="text-sm font-semibold">
-								{quizMode && !reveal ? 'Hidden' : derivedQuality}
+								{showTheory ? (quizMode && !reveal ? 'Hidden' : derivedQuality) : 'Listen for color'}
 							</div>
 							<div class="text-xs text-muted-foreground">Random inversion</div>
 						</div>
@@ -457,12 +580,12 @@
 		<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
 			<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
 				Settings
-				<span class="text-xs text-muted-foreground">Key center · Function · Drone</span>
+				<span class="text-xs text-muted-foreground">Home base · Feel · Drone</span>
 			</summary>
 			<div class="mt-4 grid gap-4 md:grid-cols-3">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
 					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						Tonic / Key center & Mode
+						Home base & Mode
 					</div>
 					<Select.Root type="single" bind:value={key as never}>
 						<Select.Trigger class="mt-2 w-full">
@@ -480,7 +603,9 @@
 					</ToggleGroup.Root>
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Function</div>
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						{showTheory ? 'Function' : 'Role / Feel'}
+					</div>
 					<ToggleGroup.Root type="single" bind:value={func} class="mt-2 flex flex-wrap gap-2">
 						{#each functions as value}
 							<ToggleGroup.Item value={value} class="px-3 text-xs">
@@ -494,6 +619,10 @@
 							<ToggleGroup.Item value="triads" class="px-3 text-xs">Triads</ToggleGroup.Item>
 							<ToggleGroup.Item value="sevenths" class="px-3 text-xs">7ths</ToggleGroup.Item>
 						</ToggleGroup.Root>
+					</div>
+					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+						<span class="text-xs text-muted-foreground">Show theory labels</span>
+						<Switch bind:checked={showTheory} />
 					</div>
 					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
 						<span class="text-xs text-muted-foreground">Quiz mode</span>

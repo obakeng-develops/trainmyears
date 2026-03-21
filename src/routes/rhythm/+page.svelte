@@ -68,6 +68,36 @@
 	let totalBars = 8;
 	let pendingRestart = $state(false);
 	let audioReady = $state(false);
+	let rhythmMode = $state<'loop' | 'context'>('loop');
+	let contextPattern = $state<'Settled' | 'Tilted' | 'Hanging'>('Settled');
+	let contextFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
+	let contextTimer: ReturnType<typeof setTimeout> | null = null;
+	const contextPatterns = [
+		{
+			label: 'Settled',
+			grouping: [4],
+			totalSteps: 4,
+			pulseLevel: 0.8,
+			subdivisionLevel: 0.2,
+			groupingLevel: 0.2
+		},
+		{
+			label: 'Tilted',
+			grouping: [3, 3, 2],
+			totalSteps: 8,
+			pulseLevel: 0.5,
+			subdivisionLevel: 0.4,
+			groupingLevel: 0.6
+		},
+		{
+			label: 'Hanging',
+			grouping: [2, 3, 3],
+			totalSteps: 8,
+			pulseLevel: 0.4,
+			subdivisionLevel: 0.4,
+			groupingLevel: 0.7
+		}
+	] as const;
 
 	const engine = new RhythmEngine({
 		onTick: (tick: RhythmTick) => {
@@ -99,6 +129,10 @@
 		stage = 'idle';
 		currentStep = 0;
 		barsRemaining = 8;
+		if (contextTimer) {
+			clearTimeout(contextTimer);
+			contextTimer = null;
+		}
 	};
 
 	const restartPlayback = () => {
@@ -133,11 +167,43 @@
 		isPlaying = true;
 	};
 
+	const playContextPattern = async () => {
+		await unlockAudio();
+		const selection = contextPatterns[Math.floor(Math.random() * contextPatterns.length)];
+		contextPattern = selection.label;
+		contextFeedback = 'idle';
+		engine.setConfig({
+			bpm: bpmValue,
+			grouping: selection.grouping as number[],
+			totalSteps: selection.totalSteps,
+			countIn,
+			countInBars: 1,
+			pulseLevel: selection.pulseLevel,
+			subdivisionLevel: selection.subdivisionLevel,
+			groupingLevel: selection.groupingLevel
+		} as Partial<RhythmEngineConfig>);
+		engine.start();
+		isPlaying = true;
+		if (contextTimer) clearTimeout(contextTimer);
+		const durationMs = (60_000 / bpmValue) * selection.totalSteps * 2;
+		contextTimer = setTimeout(() => {
+			stopPlayback();
+		}, durationMs);
+	};
+
+	const submitContext = (choice: 'Settled' | 'Tilted' | 'Hanging') => {
+		contextFeedback = choice === contextPattern ? 'correct' : 'incorrect';
+	};
+
 	const togglePlayback = () => {
 		if (isPlaying) {
 			stopPlayback();
 		} else {
-			void startPlayback();
+			if (rhythmMode === 'context') {
+				void playContextPattern();
+			} else {
+				void startPlayback();
+			}
 		}
 	};
 
@@ -198,11 +264,19 @@
 		<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-xl">
 			<Card.Header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 				<div>
-					<Card.Title class="font-display text-2xl">{stepLabel()}</Card.Title>
-					<Card.Description class="text-base">{stepPrompt()}</Card.Description>
+					<Card.Title class="font-display text-2xl">
+						{rhythmMode === 'context' ? 'Feel the groove' : stepLabel()}
+					</Card.Title>
+					<Card.Description class="text-base">
+						{rhythmMode === 'context'
+							? 'Which feel matches what you hear?'
+							: stepPrompt()}
+					</Card.Description>
 				</div>
 				<div class="flex items-center gap-3">
-					<Badge variant="secondary" class="text-xs">Next in {barsRemaining} bars</Badge>
+					{#if rhythmMode === 'loop'}
+						<Badge variant="secondary" class="text-xs">Next in {barsRemaining} bars</Badge>
+					{/if}
 					<div class="relative">
 						{#if isPlaying}
 							<span
@@ -211,35 +285,67 @@
 							></span>
 						{/if}
 						<Button onclick={togglePlayback} class="relative px-5">
-							{isPlaying ? 'Stop' : 'Start'}
+							{isPlaying ? 'Stop' : rhythmMode === 'context' ? 'Play feel' : 'Start'}
 						</Button>
 					</div>
 				</div>
 			</Card.Header>
 			<Card.Content class="space-y-6">
-				<div class="h-2 w-full rounded-full bg-border/60">
-					<div
-						class="h-full rounded-full bg-primary/70 transition-all"
-						style={`width: ${progressPercent}%;`}
-					></div>
+				<div class="flex flex-wrap items-center gap-2">
+					<ToggleGroup.Root type="single" bind:value={rhythmMode} class="flex gap-2">
+						<ToggleGroup.Item value="loop" class="px-3 text-xs">Training loop</ToggleGroup.Item>
+						<ToggleGroup.Item value="context" class="px-3 text-xs">Context trainer</ToggleGroup.Item>
+					</ToggleGroup.Root>
 				</div>
-				<div class="grid grid-cols-4 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-					{#each syllables as syllable, index}
+
+				{#if rhythmMode === 'loop'}
+					<div class="h-2 w-full rounded-full bg-border/60">
 						<div
-							class={`rounded-lg border border-border/60 px-2 py-3 ${
-								activeStep === 1
-									? currentStep === index && stage !== 'idle'
-										? 'bg-[var(--surface-2)] text-foreground shadow-[0_0_12px_rgba(186,120,52,0.3)]'
-										: 'bg-transparent opacity-50'
-									: currentStep === index && stage !== 'idle'
-										? 'bg-[var(--surface-2)] text-foreground'
-										: 'bg-transparent'
-							}`}
-						>
-							{syllable}
+							class="h-full rounded-full bg-primary/70 transition-all"
+							style={`width: ${progressPercent}%;`}
+						></div>
+					</div>
+					<div class="grid grid-cols-4 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						{#each syllables as syllable, index}
+							<div
+								class={`rounded-lg border border-border/60 px-2 py-3 ${
+									activeStep === 1
+										? currentStep === index && stage !== 'idle'
+											? 'bg-[var(--surface-2)] text-foreground shadow-[0_0_12px_rgba(186,120,52,0.3)]'
+											: 'bg-transparent opacity-50'
+										: currentStep === index && stage !== 'idle'
+											? 'bg-[var(--surface-2)] text-foreground'
+											: 'bg-transparent'
+								}`}
+							>
+								{syllable}
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
+						<div class="mt-2 text-sm">Which feel label matches the groove you just heard?</div>
+						<div class="mt-4 flex flex-wrap gap-2">
+							<Button variant="secondary" onclick={() => submitContext('Settled')}>Settled</Button>
+							<Button variant="secondary" onclick={() => submitContext('Tilted')}>Tilted</Button>
+							<Button variant="secondary" onclick={() => submitContext('Hanging')}>Hanging</Button>
 						</div>
-					{/each}
-				</div>
+						{#if contextFeedback !== 'idle'}
+							<div
+								class={`mt-4 rounded-lg border border-border/60 px-3 py-2 text-sm ring-1 ${
+									contextFeedback === 'correct'
+										? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
+										: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
+								}`}
+							>
+								{contextFeedback === 'correct'
+									? 'Correct. Notice where the groove settles.'
+									: 'Not quite. Replay and listen for the pull.'}
+							</div>
+						{/if}
+					</div>
+				{/if}
 			</Card.Content>
 		</Card.Root>
 
