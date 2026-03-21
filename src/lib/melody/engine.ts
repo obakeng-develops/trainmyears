@@ -243,7 +243,7 @@ export class MelodyEngine {
 		const phrase: MelodyPhraseNote[] = [];
 		let lastDegree = startOnTonic && allowedDegrees.includes('1')
 			? '1'
-			: this.pickStartDegree(allowedDegrees);
+			: this.pickStartDegree(allowedDegrees, startOnTonic);
 		let lastBase = this.degreeBase(lastDegree);
 		let lastMidi: number | null = null;
 		for (let i = 0; i < phraseLength; i += 1) {
@@ -395,10 +395,15 @@ export class MelodyEngine {
 		return candidates[Math.floor(Math.random() * candidates.length)] ?? fallback;
 	}
 
-	private pickStartDegree(allowed: string[]) {
+	private pickStartDegree(allowed: string[], startOnTonic: boolean) {
 		const weighted = allowed.flatMap((degree) => {
 			const base = this.degreeBase(degree);
-			const weight = base === 1 || base === 3 || base === 5 ? 3 : 1;
+			let weight = 1;
+			if (base === 3 || base === 5) {
+				weight = 3;
+			} else if (base === 1) {
+				weight = startOnTonic ? 3 : 1;
+			}
 			return Array.from({ length: weight }, () => degree);
 		});
 		let next = weighted[Math.floor(Math.random() * weighted.length)] ?? allowed[0];
