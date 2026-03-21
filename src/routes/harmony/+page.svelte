@@ -69,9 +69,11 @@
 	const rootPc = $derived(
 		(Number(key) + (mode === 'major' ? majorScaleOffsets[functionIndex] : minorScaleOffsets[functionIndex])) % 12
 	);
+	const rootLabel = $derived(harmonyKeys.find((item) => item.pc === rootPc)?.label ?? 'C');
 	const derivedTriad = $derived(mode === 'major' ? majorQualities[functionIndex] : minorQualities[functionIndex]);
 	const derivedSeventh = $derived(mode === 'major' ? majorSevenths[functionIndex] : minorSevenths[functionIndex]);
 	const derivedQuality = $derived(chordSet === 'triads' ? derivedTriad : derivedSeventh);
+	const nowHearing = $derived(`${func} in ${keyLabel} → ${rootLabel} ${derivedQuality}`);
 	const inversionLabel = $derived(inversion === 0 ? 'Root position' : inversion === 1 ? '1st inversion' : '2nd inversion');
 	const isListening = $derived(repeatOn || droneOn);
 
@@ -311,7 +313,7 @@
 					</Card.Title>
 					<Card.Description class="text-base">
 						{trainingMode === 'loop'
-							? 'Let the drone anchor the key while chords repeat.'
+							? 'Let the tonic anchor the key while chords repeat.'
 							: trainerPathConfig.prompt}
 					</Card.Description>
 					<div class="mt-2 text-sm text-muted-foreground">
@@ -319,9 +321,12 @@
 							? 'Triad quality follows the function in the selected mode.'
 							: '7th chord quality follows the function in the selected mode.'}
 					</div>
+					<div class="mt-2 text-xs text-muted-foreground">
+						Functions are relative to the key center.
+					</div>
 				</div>
 				<div class="flex items-center gap-3">
-					<Badge variant="secondary" class="text-xs">Key {keyLabel}</Badge>
+					<Badge variant="secondary" class="text-xs">Tonic {keyLabel}</Badge>
 					<Badge variant={isListening ? 'default' : 'secondary'} class="text-xs">
 						{isListening ? 'Listening' : 'Idle'}
 					</Badge>
@@ -442,6 +447,9 @@
 							{/if}
 						</div>
 					</div>
+					<div class="rounded-lg border border-border/60 bg-[var(--surface-2)] px-3 py-2 text-xs text-muted-foreground">
+						Now hearing: {nowHearing}
+					</div>
 				{/if}
 			</Card.Content>
 		</Card.Root>
@@ -449,11 +457,13 @@
 		<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
 			<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
 				Settings
-				<span class="text-xs text-muted-foreground">Key · Function · Drone</span>
+				<span class="text-xs text-muted-foreground">Key center · Function · Drone</span>
 			</summary>
 			<div class="mt-4 grid gap-4 md:grid-cols-3">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key & Mode</div>
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						Tonic / Key center & Mode
+					</div>
 					<Select.Root type="single" bind:value={key as never}>
 						<Select.Trigger class="mt-2 w-full">
 							<span>{keyLabel}</span>

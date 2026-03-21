@@ -781,6 +781,9 @@ const floorSyllables: Record<number, string[]> = {
 				: minorScaleOffsets[harmonyFunctionIndex])!) %
 			12
 	);
+	const harmonyRootLabel = $derived(
+		harmonyKeys.find((key) => key.pc === harmonyRootPc)?.label ?? 'C'
+	);
 	const harmonyDerivedTriad = $derived(
 		harmonyKeyMode === 'major'
 			? majorQualities[harmonyFunctionIndex]
@@ -793,6 +796,9 @@ const floorSyllables: Record<number, string[]> = {
 	);
 	const harmonyDerivedQuality = $derived(
 		harmonyChordSet === 'triads' ? harmonyDerivedTriad : harmonyDerivedSeventh
+	);
+	const harmonyNowHearing = $derived(
+		`${harmonyFunction} in ${harmonyKeyLabel} → ${harmonyRootLabel} ${harmonyDerivedQuality}`
 	);
 	const harmonyInversionLabel = $derived(
 		harmonyInversion === 0 ? 'Root position' : harmonyInversion === 1 ? '1st inversion' : '2nd inversion'
@@ -1932,12 +1938,12 @@ const floorSyllables: Record<number, string[]> = {
 			<aside class="order-2 space-y-6 lg:order-none">
 				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
 					<Card.Header>
-						<Card.Title class="font-display text-lg">Key & Drone</Card.Title>
-						<Card.Description>Choose the tonal center and sustain it.</Card.Description>
+						<Card.Title class="font-display text-lg">Tonic / Key center & Drone</Card.Title>
+						<Card.Description>Choose the key center and sustain it.</Card.Description>
 					</Card.Header>
 					<Card.Content class="space-y-4">
 						<div class="space-y-2">
-							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key</div>
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tonic / Key center</div>
 							<Select.Root type="single" bind:value={harmonyKey as never}>
 								<Select.Trigger class="w-full">
 									<span>{harmonyKeyLabel}</span>
@@ -1993,7 +1999,10 @@ const floorSyllables: Record<number, string[]> = {
 						</summary>
 					<div class="mt-4 space-y-4">
 						<div class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
-							Function = the chord's role in the key. Function key can shift along the circle of fifths.
+							Function = the chord's role in the key center. Function key can shift along the circle of fifths.
+						</div>
+						<div class="rounded-lg border border-border/60 bg-[var(--surface-2)] px-3 py-2 text-xs text-muted-foreground">
+							Now hearing: {harmonyNowHearing}
 						</div>
 						<div class="space-y-2">
 							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mode</div>
@@ -2017,7 +2026,9 @@ const floorSyllables: Record<number, string[]> = {
 							</ToggleGroup.Root>
 						</div>
 						<div class="space-y-2">
-							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Function key</div>
+						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+							Function key center
+						</div>
 							<Select.Root type="single" bind:value={harmonyFunctionKey as never}>
 								<Select.Trigger class="w-full">
 									<span>{harmonyFunctionKeyLabel}</span>
@@ -2104,7 +2115,7 @@ const floorSyllables: Record<number, string[]> = {
 							</Card.Description>
 						</div>
 						<div class="flex items-center gap-3">
-							<Badge variant="secondary" class="text-xs">Key {harmonyKeyLabel}</Badge>
+							<Badge variant="secondary" class="text-xs">Tonic {harmonyKeyLabel}</Badge>
 							<Button onclick={playHarmonyChord} class="px-5">Play chord</Button>
 						</div>
 					</Card.Header>
@@ -2122,7 +2133,7 @@ const floorSyllables: Record<number, string[]> = {
 									{harmonyQuizMode ? 'Hidden' : harmonyFunction}
 								</div>
 								<div class="text-xs text-muted-foreground">
-									Function key: {harmonyFunctionKeyLabel}
+									Function key center: {harmonyFunctionKeyLabel}
 								</div>
 							</div>
 						<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
@@ -2155,10 +2166,10 @@ const floorSyllables: Record<number, string[]> = {
 						</div>
 						<div class="mt-6 rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
 							<div class="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
-								<span>Drone: {harmonyKeyLabel} · {harmonyDroneOn ? 'On' : 'Off'}</span>
-								<span>
-									Function key: {harmonyFunctionKeyLabel} · {harmonyFunction}
-								</span>
+							<span>Drone: {harmonyKeyLabel} · {harmonyDroneOn ? 'On' : 'Off'}</span>
+							<span>
+								Function key center: {harmonyFunctionKeyLabel} · {harmonyFunction}
+							</span>
 							<span>
 								{harmonyChordSet === 'triads' ? 'Triad' : '7th'}:{' '}
 								{harmonyChordMode === 'function'
@@ -2171,6 +2182,9 @@ const floorSyllables: Record<number, string[]> = {
 							</div>
 							<div class="mt-3 text-sm">
 								Listen for how the chord feels against the drone, then name its function.
+							</div>
+							<div class="mt-2 text-xs text-muted-foreground">
+								Now hearing: {harmonyNowHearing}
 							</div>
 						</div>
 					</Card.Content>
@@ -2679,7 +2693,7 @@ const floorSyllables: Record<number, string[]> = {
 				</Button>
 			</div>
 			<div class="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-				<span>Function key: {harmonyFunctionKeyLabel}</span>
+				<span>Function key center: {harmonyFunctionKeyLabel}</span>
 				<Button size="sm" variant="secondary" onclick={advanceHarmonyKey}>
 					Advance
 				</Button>
