@@ -1,3 +1,5 @@
+type ToneModule = typeof import('tone');
+
 export type TriadType = 'major' | 'minor' | 'diminished' | 'augmented';
 export type SeventhType = 'maj7' | 'dom7' | 'min7' | 'm7b5' | 'dim7';
 export type ChordQuality = TriadType | SeventhType;
@@ -23,6 +25,40 @@ const CHORD_INTERVALS: Record<ChordQuality, number[]> = {
 	dim7: [0, 3, 6, 9]
 };
 
+const SALAMANDER_BASE_URL = 'https://tonejs.github.io/audio/salamander/';
+const SALAMANDER_URLS: Record<string, string> = {
+	A0: 'A0.mp3',
+	C1: 'C1.mp3',
+	'D#1': 'Ds1.mp3',
+	'F#1': 'Fs1.mp3',
+	A1: 'A1.mp3',
+	C2: 'C2.mp3',
+	'D#2': 'Ds2.mp3',
+	'F#2': 'Fs2.mp3',
+	A2: 'A2.mp3',
+	C3: 'C3.mp3',
+	'D#3': 'Ds3.mp3',
+	'F#3': 'Fs3.mp3',
+	A3: 'A3.mp3',
+	C4: 'C4.mp3',
+	'D#4': 'Ds4.mp3',
+	'F#4': 'Fs4.mp3',
+	A4: 'A4.mp3',
+	C5: 'C5.mp3',
+	'D#5': 'Ds5.mp3',
+	'F#5': 'Fs5.mp3',
+	A5: 'A5.mp3',
+	C6: 'C6.mp3',
+	'D#6': 'Ds6.mp3',
+	'F#6': 'Fs6.mp3',
+	A6: 'A6.mp3',
+	C7: 'C7.mp3',
+	'D#7': 'Ds7.mp3',
+	'F#7': 'Fs7.mp3',
+	A7: 'A7.mp3',
+	C8: 'C8.mp3'
+};
+
 const midiToFrequency = (midi: number) =>
 	A4_FREQUENCY * Math.pow(2, (midi - A4_MIDI) / 12);
 
@@ -41,6 +77,14 @@ export class HarmonyEngine {
 	private ctx: AudioContext | null = null;
 	private droneNodes: GainNode[] = [];
 	private droneOscillators: OscillatorNode[] = [];
+	private droneFilters: BiquadFilterNode[] = [];
+	private droneLfo: OscillatorNode | null = null;
+	private droneLfoGain: GainNode | null = null;
+	private tone: ToneModule | null = null;
+	private sampler: import('tone').Sampler | null = null;
+	private samplerReverb: import('tone').Reverb | null = null;
+	private samplerReady = false;
+	private samplerLoading: Promise<void> | null = null;
 	private droneVolume = 0.3;
 	private droneBlend = 0.5;
 	private keyPc = 0;
@@ -55,6 +99,55 @@ export class HarmonyEngine {
 		this.ctx ??= new AudioContext();
 		await this.ctx.resume();
 		return this.ctx;
+	}
+
+	private async ensureTone() {
+		if (!this.tone) {
+			this.tone = await import('tone');
+		}
+		await this.tone.start();
+		return this.tone;
+	}
+
+	async loadSampler() {
+		if (this.samplerReady) return;
+		if (this.samplerLoading) return this.samplerLoading;
+		this.samplerLoading = (async () => {
+			try {
+				const tone = await this.ensureTone();
+				if (this.sampler) {
+					this.sampler.dispose();
+					this.sampler = null;
+				}
+				if (this.samplerReverb) {
+					this.samplerReverb.dispose();
+					this.samplerReverb = null;
+				}
+				const reverb = new tone.Reverb({ decay: 2.0, wet: 0.16, preDelay: 0.01 });
+				await reverb.generate();
+				reverb.toDestination();
+				const sampler = new tone.Sampler({
+					urls: SALAMANDER_URLS,
+					baseUrl: SALAMANDER_BASE_URL,
+					release: 1.1
+				});
+				sampler.connect(reverb);
+				await new Promise<void>((resolve) => {
+					const loaded = (sampler as unknown as { loaded?: boolean }).loaded;
+					if (loaded) {
+						resolve();
+						return;
+					}
+					(sampler as unknown as { onload?: () => void }).onload = () => resolve();
+				});
+				this.samplerReverb = reverb;
+				this.sampler = sampler;
+				this.samplerReady = true;
+			} finally {
+				this.samplerLoading = null;
+			}
+		})();
+		return this.samplerLoading;
 	}
 
 	setKeyPc(pc: number) {
@@ -81,42 +174,65 @@ export class HarmonyEngine {
 		const baseMidi = 48 + this.keyPc;
 		const fifthMidi = baseMidi + 7;
 
-		const rootOsc = ctx.createOscillator();
-		const fifthOsc = ctx.createOscillator();
-		rootOsc.type = 'sine';
-		fifthOsc.type = 'triangle';
-		rootOsc.frequency.value = midiToFrequency(baseMidi);
-		fifthOsc.frequency.value = midiToFrequency(fifthMidi);
-
 		const rootGain = ctx.createGain();
 		const fifthGain = ctx.createGain();
-		const rootFilter = ctx.createBiquadFilter();
-		const fifthFilter = ctx.createBiquadFilter();
-		rootFilter.type = 'lowpass';
-		fifthFilter.type = 'lowpass';
-		rootFilter.frequency.value = 760;
-		fifthFilter.frequency.value = 760;
-		rootFilter.Q.value = 0.3;
-		fifthFilter.Q.value = 0.3;
 		const now = ctx.currentTime;
 		rootGain.gain.setValueAtTime(0, now);
 		fifthGain.gain.setValueAtTime(0, now);
 		this.droneNodes = [rootGain, fifthGain];
-		this.droneOscillators = [rootOsc, fifthOsc];
 
-		rootOsc.connect(rootFilter).connect(rootGain).connect(ctx.destination);
-		fifthOsc.connect(fifthFilter).connect(fifthGain).connect(ctx.destination);
+		const createPadTone = (
+			midi: number,
+			gainNode: GainNode,
+			waveforms: OscillatorType[],
+			detunes: number[]
+		) => {
+			const oscList: OscillatorNode[] = [];
+			waveforms.forEach((type, index) => {
+				const osc = ctx.createOscillator();
+				osc.type = type;
+				osc.frequency.value = midiToFrequency(midi);
+				osc.detune.value = detunes[index] ?? 0;
+				const filter = ctx.createBiquadFilter();
+				filter.type = 'lowpass';
+				filter.frequency.value = 560;
+				filter.Q.value = 0.25;
+				const panner = ctx.createStereoPanner();
+				panner.pan.value = index === 0 ? -0.35 : index === 1 ? 0.35 : 0;
+				osc.connect(filter).connect(panner).connect(gainNode);
+				this.droneFilters.push(filter);
+				oscList.push(osc);
+			});
+			return oscList;
+		};
+
+		const rootOscs = createPadTone(baseMidi, rootGain, ['sine', 'triangle', 'sawtooth'], [-4, 4, 0]);
+		const fifthOscs = createPadTone(fifthMidi, fifthGain, ['triangle', 'sine', 'sawtooth'], [-3, 3, 0]);
+		this.droneOscillators = [...rootOscs, ...fifthOscs];
+
+		rootGain.connect(ctx.destination);
+		fifthGain.connect(ctx.destination);
+
+		this.droneLfo = ctx.createOscillator();
+		this.droneLfo.type = 'sine';
+		this.droneLfo.frequency.value = 0.08;
+		this.droneLfoGain = ctx.createGain();
+		this.droneLfoGain.gain.value = 45;
+		this.droneLfo.connect(this.droneLfoGain);
+		this.droneFilters.forEach((filter) => {
+			this.droneLfoGain?.connect(filter.frequency);
+		});
 
 		this.updateDroneGains();
 
-		rootOsc.start();
-		fifthOsc.start();
+		this.droneOscillators.forEach((osc) => osc.start());
+		this.droneLfo.start();
 	}
 
 	stopDrone() {
 		const ctx = this.ctx;
 		const now = ctx?.currentTime ?? 0;
-		const release = 0.18;
+		const release = 0.9;
 		this.droneNodes.forEach((gain) => {
 			try {
 				gain.gain.cancelScheduledValues(now);
@@ -133,12 +249,21 @@ export class HarmonyEngine {
 				// ignore
 			}
 		});
+		if (this.droneLfo) {
+			try {
+				this.droneLfo.stop(now + release + 0.02);
+			} catch {
+				// ignore
+			}
+		}
 		this.droneOscillators = [];
 		this.droneNodes = [];
+		this.droneFilters = [];
+		this.droneLfo = null;
+		this.droneLfoGain = null;
 	}
 
 	playChord({ rootPc, quality, inversion }: HarmonyChord) {
-		const ctx = this.ensureContext();
 		const baseMidi = 60 + (rootPc % 12);
 		const intervals = CHORD_INTERVALS[quality];
 		const notes = intervals.map((interval) => baseMidi + interval);
@@ -149,6 +274,18 @@ export class HarmonyEngine {
 			if (note !== undefined) reordered.push(note + 12);
 		}
 
+		if (this.samplerReady && this.sampler && this.tone) {
+			const duration = 1.9;
+			reordered.forEach((midi) => {
+				const note = this.tone?.Frequency(midi, 'midi').toNote();
+				if (note) {
+					this.sampler?.triggerAttackRelease(note, duration, undefined, 0.65);
+				}
+			});
+			return;
+		}
+
+		const ctx = this.ensureContext();
 		const duration = 1.7;
 		reordered.forEach((midi) => {
 			const osc = ctx.createOscillator();
@@ -166,17 +303,18 @@ export class HarmonyEngine {
 		const ctx = this.ctx;
 		if (!rootGain || !fifthGain || !ctx) return;
 		const now = ctx.currentTime;
-		const attack = 0.18;
+		const attack = 0.14;
+		const boostedVolume = Math.min(1, this.droneVolume * 1.12);
 		rootGain.gain.cancelScheduledValues(now);
 		fifthGain.gain.cancelScheduledValues(now);
 		rootGain.gain.setValueAtTime(rootGain.gain.value || 0, now);
 		fifthGain.gain.setValueAtTime(fifthGain.gain.value || 0, now);
 		rootGain.gain.linearRampToValueAtTime(
-			this.droneVolume * (1 - this.droneBlend * 0.6),
+			boostedVolume * (1 - this.droneBlend * 0.6),
 			now + attack
 		);
 		fifthGain.gain.linearRampToValueAtTime(
-			this.droneVolume * this.droneBlend,
+			boostedVolume * this.droneBlend,
 			now + attack
 		);
 	}

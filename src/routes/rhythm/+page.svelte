@@ -66,7 +66,6 @@
 	let barsRemaining = $state(8);
 	let lastConfigKey = $state('');
 	let totalBars = 8;
-	let pendingRestart = $state(false);
 	let audioReady = $state(false);
 	let rhythmMode = $state<'loop' | 'context'>('loop');
 	let contextPattern = $state<'Settled' | 'Tilted' | 'Hanging'>('Settled');
@@ -109,12 +108,7 @@
 				if (autoAdvance && !holdHere && barsRemaining === 0) {
 					activeStep = Math.min(activeStep + 1, steps.length - 1);
 					barsRemaining = 8;
-					pendingRestart = true;
-					setTimeout(() => {
-						if (!pendingRestart) return;
-						pendingRestart = false;
-						restartPlayback();
-					}, 0);
+					applyStepConfig();
 				}
 			}
 		},
@@ -135,11 +129,6 @@
 		}
 	};
 
-	const restartPlayback = () => {
-		stopPlayback();
-		startPlayback();
-	};
-
 	const unlockAudio = async () => {
 		if (audioReady) return;
 		try {
@@ -150,9 +139,7 @@
 		}
 	};
 
-	const startPlayback = async () => {
-		await unlockAudio();
-		barsRemaining = 8;
+	const applyStepConfig = () => {
 		engine.setConfig({
 			bpm: bpmValue,
 			grouping: [4],
@@ -163,6 +150,12 @@
 			subdivisionLevel: activeStep === 1 ? 0.9 : activeStep === 0 ? 0.2 : 0.6,
 			groupingLevel: 0
 		} as Partial<RhythmEngineConfig>);
+	};
+
+	const startPlayback = async () => {
+		await unlockAudio();
+		barsRemaining = 8;
+		applyStepConfig();
 		engine.start();
 		isPlaying = true;
 	};
@@ -211,7 +204,7 @@
 	const stepPrompt = () => steps[activeStep]?.prompt[role] ?? '';
 	const progressPercent = $derived(((totalBars - barsRemaining) / totalBars) * 100);
 
-	const configKey = $derived(`${bpmValue}-${activeStep}-${countIn}`);
+	const configKey = $derived(`${bpmValue}-${countIn}`);
 	$effect(() => {
 		if (isPlaying && configKey !== lastConfigKey) {
 			stopPlayback();

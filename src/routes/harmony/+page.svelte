@@ -68,6 +68,9 @@
 	let keepDroneOnStop = $state(true);
 	let timer: ReturnType<typeof setInterval> | null = null;
 	let audioReady = $state(false);
+	let samplesReady = $state(false);
+	let samplesLoading = $state(false);
+	let samplesPreloadTriggered = $state(false);
 
 	const engine = new HarmonyEngine();
 
@@ -110,7 +113,25 @@
 		}
 	};
 
-	const playChordInternal = () => {
+	const ensureSamples = async () => {
+		if (samplesReady || samplesLoading) return;
+		samplesLoading = true;
+		try {
+			await engine.loadSampler();
+			samplesReady = true;
+		} finally {
+			samplesLoading = false;
+		}
+	};
+
+	const preloadSamples = () => {
+		if (samplesPreloadTriggered || samplesReady) return;
+		samplesPreloadTriggered = true;
+		void ensureSamples();
+	};
+
+	const playChordInternal = async () => {
+		preloadSamples();
 		const next = Math.floor(Math.random() * 3) as 0 | 1 | 2;
 		inversion = next;
 		engine.playChord({ rootPc, quality: derivedQuality, inversion: next });
@@ -163,6 +184,7 @@
 
 	const playTrainerSequence = async () => {
 		await unlockAudio();
+		preloadSamples();
 		trainerFeedback = 'idle';
 		const choices = [...trainerPathConfig.choices].sort(() => Math.random() - 0.5);
 		trainerChoices = choices;
@@ -200,6 +222,7 @@
 
 	const playContextChord = async () => {
 		await unlockAudio();
+		preloadSamples();
 		const basePc = Number(contextKey);
 		const chordPc = Number(contextChordRoot);
 		const offset = (chordPc - basePc + 12) % 12;
@@ -214,14 +237,18 @@
 
 	const playChord = async () => {
 		await unlockAudio();
-		playChordInternal();
+		preloadSamples();
+		void playChordInternal();
 	};
 
 	const startRepeat = () => {
 		if (timer) return;
 		if (!audioReady) return;
-		playChordInternal();
-		timer = setInterval(playChordInternal, repeatSeconds * 1000);
+		preloadSamples();
+		void playChordInternal();
+		timer = setInterval(() => {
+			void playChordInternal();
+		}, repeatSeconds * 1000);
 	};
 
 	const stopRepeat = () => {
