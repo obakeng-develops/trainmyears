@@ -85,6 +85,7 @@ export class HarmonyEngine {
 	private samplerReverb: import('tone').Reverb | null = null;
 	private samplerReady = false;
 	private samplerLoading: Promise<void> | null = null;
+	private toneStarted = false;
 	private droneVolume = 0.3;
 	private droneBlend = 0.5;
 	private keyPc = 0;
@@ -98,14 +99,18 @@ export class HarmonyEngine {
 	async unlock() {
 		this.ctx ??= new AudioContext();
 		await this.ctx.resume();
+		await this.ensureTone(true);
 		return this.ctx;
 	}
 
-	private async ensureTone() {
+	private async ensureTone(startAudio = false) {
 		if (!this.tone) {
 			this.tone = await import('tone');
 		}
-		await this.tone.start();
+		if (startAudio && !this.toneStarted) {
+			await this.tone.start();
+			this.toneStarted = true;
+		}
 		return this.tone;
 	}
 
@@ -114,7 +119,7 @@ export class HarmonyEngine {
 		if (this.samplerLoading) return this.samplerLoading;
 		this.samplerLoading = (async () => {
 			try {
-				const tone = await this.ensureTone();
+				const tone = await this.ensureTone(false);
 				if (this.sampler) {
 					this.sampler.dispose();
 					this.sampler = null;
@@ -132,14 +137,7 @@ export class HarmonyEngine {
 					release: 1.1
 				});
 				sampler.connect(reverb);
-				await new Promise<void>((resolve) => {
-					const loaded = (sampler as unknown as { loaded?: boolean }).loaded;
-					if (loaded) {
-						resolve();
-						return;
-					}
-					(sampler as unknown as { onload?: () => void }).onload = () => resolve();
-				});
+				await tone.loaded();
 				this.samplerReverb = reverb;
 				this.sampler = sampler;
 				this.samplerReady = true;
