@@ -14,6 +14,7 @@
 		type MelodyTick,
 		type MelodyStage
 	} from '$lib/melody/engine';
+	import MelodyListeningTrainer from '$lib/melody/listening-trainer.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
@@ -2610,6 +2611,10 @@ const floorSyllables: Record<number, string[]> = {
 			</main>
 		</div>
 	{:else}
+		<div class="flex flex-col gap-6">
+			<MelodyListeningTrainer bind:bpm={bpmValue} />
+		</div>
+		{#if false}
 		<div class="flex flex-col gap-6 lg:grid lg:grid-cols-[320px,1fr]">
 			<aside class="order-2 space-y-6 lg:order-none">
 				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
@@ -2997,6 +3002,7 @@ const floorSyllables: Record<number, string[]> = {
 			</main>
 		</div>
 	{/if}
+	{/if}
 	</div>
 </div>
 
@@ -3129,7 +3135,7 @@ const floorSyllables: Record<number, string[]> = {
 	</div>
 {/if}
 
-{#if phase === 'melody'}
+{#if false && phase === 'melody'}
 	<div class="fixed inset-x-4 bottom-4 z-40 lg:hidden">
 		<div class="rounded-2xl border border-border/70 bg-card/95 px-4 py-3 shadow-xl backdrop-blur">
 			<div class="flex items-center justify-between gap-3">

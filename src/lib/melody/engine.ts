@@ -1,5 +1,39 @@
 type ToneModule = typeof import('tone');
 
+const SALAMANDER_BASE_URL = 'https://tonejs.github.io/audio/salamander/';
+const SALAMANDER_URLS: Record<string, string> = {
+	A0: 'A0.mp3',
+	C1: 'C1.mp3',
+	'D#1': 'Ds1.mp3',
+	'F#1': 'Fs1.mp3',
+	A1: 'A1.mp3',
+	C2: 'C2.mp3',
+	'D#2': 'Ds2.mp3',
+	'F#2': 'Fs2.mp3',
+	A2: 'A2.mp3',
+	C3: 'C3.mp3',
+	'D#3': 'Ds3.mp3',
+	'F#3': 'Fs3.mp3',
+	A3: 'A3.mp3',
+	C4: 'C4.mp3',
+	'D#4': 'Ds4.mp3',
+	'F#4': 'Fs4.mp3',
+	A4: 'A4.mp3',
+	C5: 'C5.mp3',
+	'D#5': 'Ds5.mp3',
+	'F#5': 'Fs5.mp3',
+	A5: 'A5.mp3',
+	C6: 'C6.mp3',
+	'D#6': 'Ds6.mp3',
+	'F#6': 'Fs6.mp3',
+	A6: 'A6.mp3',
+	C7: 'C7.mp3',
+	'D#7': 'Ds7.mp3',
+	'F#7': 'Fs7.mp3',
+	A7: 'A7.mp3',
+	C8: 'C8.mp3'
+};
+
 export type MelodyStage = 'idle' | 'count-in' | 'playing' | 'rest';
 
 export type MelodyTick = {
@@ -100,6 +134,11 @@ export class MelodyEngine {
 	private callbacks: MelodyEngineCallbacks;
 	private tone: ToneModule | null = null;
 	private synth: import('tone').FMSynth | null = null;
+	private sampler: import('tone').Sampler | null = null;
+	private samplerReverb: import('tone').Reverb | null = null;
+	private samplerReady = false;
+	private samplerLoading: Promise<void> | null = null;
+	private toneStarted = false;
 	private droneOsc: import('tone').Oscillator | null = null;
 	private droneGain: import('tone').Gain | null = null;
 	private droneFilter: import('tone').Filter | null = null;
@@ -142,8 +181,47 @@ export class MelodyEngine {
 
 	async unlock() {
 		this.tone ??= await import('tone');
-		await this.tone.start();
+		if (!this.toneStarted) {
+			await this.tone.start();
+			this.toneStarted = true;
+		}
 		this.ensureSynth();
+	}
+
+	async loadSampler() {
+		if (this.samplerReady) return;
+		if (this.samplerLoading) return this.samplerLoading;
+		this.samplerLoading = (async () => {
+			try {
+				this.tone ??= await import('tone');
+				const tone = this.tone;
+				if (!tone) return;
+				if (this.sampler) {
+					this.sampler.dispose();
+					this.sampler = null;
+				}
+				if (this.samplerReverb) {
+					this.samplerReverb.dispose();
+					this.samplerReverb = null;
+				}
+				const reverb = new tone.Reverb({ decay: 2.0, wet: 0.16, preDelay: 0.01 });
+				await reverb.generate();
+				reverb.toDestination();
+				const sampler = new tone.Sampler({
+					urls: SALAMANDER_URLS,
+					baseUrl: SALAMANDER_BASE_URL,
+					release: 1.1
+				});
+				sampler.connect(reverb);
+				await tone.loaded();
+				this.samplerReverb = reverb;
+				this.sampler = sampler;
+				this.samplerReady = true;
+			} finally {
+				this.samplerLoading = null;
+			}
+		})();
+		return this.samplerLoading;
 	}
 
 	start() {
@@ -295,7 +373,7 @@ export class MelodyEngine {
 	}
 
 	private scheduleBeat(beatNumber: number, time: number) {
-		if (!this.synth || !this.tone) return;
+		if (!this.tone) return;
 		const { phraseLength, loopBars, countInBars, loop } = this.config;
 		const countInTotal = countInBars * 4;
 		if (beatNumber < countInTotal) return;
@@ -305,6 +383,14 @@ export class MelodyEngine {
 		if (beatInLoop >= phraseLength) return;
 		const note = this.phrase[beatInLoop];
 		if (!note) return;
+		if (this.samplerReady && this.sampler) {
+			const noteName = this.tone.Frequency(note.midi, 'midi').toNote();
+			if (noteName) {
+				this.sampler.triggerAttackRelease(noteName, 0.75, time, 0.7);
+			}
+			return;
+		}
+		if (!this.synth) return;
 		const freq = this.tone.Frequency(note.midi, 'midi').toFrequency();
 		this.synth.triggerAttackRelease(freq, 0.55, time);
 	}
