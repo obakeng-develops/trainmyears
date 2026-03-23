@@ -46,6 +46,16 @@
 			</a>
 			<a
 				class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
+					isSection('/progression')
+						? 'bg-primary/10 text-foreground'
+						: 'hover:text-foreground'
+				}`}
+				href="/progression"
+			>
+				Progression
+			</a>
+			<a
+				class={`whitespace-nowrap rounded-full px-3 py-1 transition-colors ${
 					isSection('/melody') && !isSection('/melody/advanced')
 						? 'bg-primary/10 text-foreground'
 						: 'hover:text-foreground'
@@ -122,22 +132,34 @@
 					}`}
 				></span>
 			</a>
-			<a
-				class={`flex flex-col items-center gap-1 ${
-					isSection('/harmony') && !isSection('/harmony/advanced')
-						? 'text-foreground'
-						: 'hover:text-foreground'
+		<a
+			class={`flex flex-col items-center gap-1 ${
+				isSection('/harmony') && !isSection('/harmony/advanced')
+					? 'text-foreground'
+					: 'hover:text-foreground'
+			}`}
+			href="/harmony"
+			aria-current={isSection('/harmony') && !isSection('/harmony/advanced') ? 'page' : undefined}
+		>
+			<span>Harmony</span>
+			<span
+				class={`h-1 w-1 rounded-full ${
+					isSection('/harmony') && !isSection('/harmony/advanced') ? 'bg-primary' : 'bg-transparent'
 				}`}
-				href="/harmony"
-				aria-current={isSection('/harmony') && !isSection('/harmony/advanced') ? 'page' : undefined}
-			>
-				<span>Harmony</span>
-				<span
-					class={`h-1 w-1 rounded-full ${
-						isSection('/harmony') && !isSection('/harmony/advanced') ? 'bg-primary' : 'bg-transparent'
-					}`}
-				></span>
-			</a>
+			></span>
+		</a>
+		<a
+			class={`flex flex-col items-center gap-1 ${
+				isSection('/progression') ? 'text-foreground' : 'hover:text-foreground'
+			}`}
+			href="/progression"
+			aria-current={isSection('/progression') ? 'page' : undefined}
+		>
+			<span>Progression</span>
+			<span
+				class={`h-1 w-1 rounded-full ${isSection('/progression') ? 'bg-primary' : 'bg-transparent'}`}
+			></span>
+		</a>
 			<a
 				class={`flex flex-col items-center gap-1 ${
 					isSection('/melody') && !isSection('/melody/advanced')

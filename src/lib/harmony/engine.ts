@@ -8,6 +8,8 @@ export type HarmonyChord = {
 	rootPc: number;
 	quality: ChordQuality;
 	inversion: 0 | 1 | 2;
+	spread?: boolean;
+	useSampler?: boolean;
 };
 
 const A4_FREQUENCY = 440;
@@ -261,7 +263,7 @@ export class HarmonyEngine {
 		this.droneLfoGain = null;
 	}
 
-	playChord({ rootPc, quality, inversion }: HarmonyChord) {
+	playChord({ rootPc, quality, inversion, spread, useSampler }: HarmonyChord) {
 		const baseMidi = 60 + (rootPc % 12);
 		const intervals = CHORD_INTERVALS[quality];
 		const notes = intervals.map((interval) => baseMidi + interval);
@@ -271,8 +273,11 @@ export class HarmonyEngine {
 			const note = reordered.shift();
 			if (note !== undefined) reordered.push(note + 12);
 		}
+		if (spread && reordered.length >= 3) {
+			reordered[1] = reordered[1] + 12;
+		}
 
-		if (this.samplerReady && this.sampler && this.tone) {
+		if (useSampler !== false && this.samplerReady && this.sampler && this.tone) {
 			const duration = 1.9;
 			reordered.forEach((midi) => {
 				const note = this.tone?.Frequency(midi, 'midi').toNote();

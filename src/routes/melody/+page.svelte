@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import MelodyListeningTrainer from '$lib/melody/listening-trainer.svelte';
+	import MelodyListeningTrainerMinimal from '$lib/melody/listening-trainer-minimal.svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 
 	let bpm = $state(92);
@@ -27,6 +27,6 @@
 			<Badge variant="secondary" class="text-xs">Passive-first</Badge>
 		</header>
 
-		<MelodyListeningTrainer bind:bpm={bpm} />
+		<MelodyListeningTrainerMinimal bind:bpm={bpm} />
 	</div>
 </div>

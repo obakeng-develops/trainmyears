@@ -5,7 +5,7 @@
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 
-	const modes = ['rhythm', 'harmony', 'melody'] as const;
+	const modes = ['rhythm', 'harmony', 'progression', 'melody'] as const;
 	let mode = $state<(typeof modes)[number]>('rhythm');
 	let hasLastMode = $state(false);
 
@@ -36,7 +36,7 @@
 				Train My Ears
 			</h1>
 			<p class="max-w-2xl text-base text-muted-foreground md:text-lg">
-				A guided ear-training app for rhythm, melody, and harmony. Build the loop of
+				A guided ear-training app for rhythm, melody, harmony, and progressions. Build the loop of
 				hear → feel → produce with minimal friction.
 			</p>
 			<div class="flex flex-wrap gap-3">
@@ -51,7 +51,7 @@
 			How it works
 		</div>
 
-		<div class="grid gap-4 md:grid-cols-3">
+		<div class="grid gap-4 md:grid-cols-4">
 			<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
 				<Card.Header>
 					<div class="flex items-center gap-3">
@@ -140,8 +140,14 @@
 			</Card.Root>
 			<Card.Root class="border/60 bg-[var(--surface-2)]/80 shadow-none backdrop-blur">
 				<Card.Header>
+					<Card.Title class="font-display text-lg">Progression</Card.Title>
+					<Card.Description>Chord loops that reveal pull and release.</Card.Description>
+				</Card.Header>
+			</Card.Root>
+			<Card.Root class="border/60 bg-[var(--surface-2)]/80 shadow-none backdrop-blur">
+				<Card.Header>
 					<Card.Title class="font-display text-lg">Melody</Card.Title>
-					<Card.Description>Movable Do phrases you can sing or tap back.</Card.Description>
+					<Card.Description>Scale and pattern listening against a drone.</Card.Description>
 				</Card.Header>
 			</Card.Root>
 		</div>
@@ -161,7 +167,11 @@
 				</ToggleGroup.Root>
 				<Button class="w-full" onclick={startSession}>Begin session</Button>
 				<div class="text-xs text-muted-foreground">
-					Need full control? Go to <a class="underline" href={`/${mode}/advanced`}>Advanced</a>.
+					{#if mode === 'progression'}
+						Need full control? Open <a class="underline" href="/progression">Progression Console</a>.
+					{:else}
+						Need full control? Go to <a class="underline" href={`/${mode}/advanced`}>Advanced</a>.
+					{/if}
 				</div>
 				{#if hasLastMode}
 					<Button variant="secondary" class="w-full" onclick={() => goto(`/${mode}`)}>

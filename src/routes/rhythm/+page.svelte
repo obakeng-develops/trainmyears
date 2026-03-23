@@ -13,204 +13,142 @@
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 
-	const roleOptions = ['instrumentalist', 'drummer', 'singer'] as const;
-	const syllables = ['Ta', 'Ka', 'Di', 'Mi'];
-	const steps = [
-		{
-			id: 'pulse',
-			label: 'Pulse only',
-			prompt: {
-				instrumentalist: 'Tap the pulse with your foot.',
-				drummer: 'Foot the pulse. Keep it steady.',
-				singer: 'Feel the pulse in your body.'
-			}
-		},
-		{
-			id: 'subdivision',
-			label: 'Subdivision only',
-			prompt: {
-				instrumentalist: 'Clap every subdivision.',
-				drummer: 'Stick the subdivisions cleanly.',
-				singer: 'Clap lightly and evenly.'
-			}
-		},
-		{
-			id: 'syllables',
-			label: 'Konnakol',
-			prompt: {
-				instrumentalist: 'Speak the syllables clearly.',
-				drummer: 'Speak syllables to anchor the grid.',
-				singer: 'Sing the syllables smoothly.'
-			}
-		},
-		{
-			id: 'combine',
-			label: 'Combine',
-			prompt: {
-				instrumentalist: 'Pulse + subdivisions + syllables together.',
-				drummer: 'Foot + stick + syllables together.',
-				singer: 'Pulse + clap + voice together.'
-			}
-		}
-	] as const;
+	const subdivisionOptions = ['1', '2', '3', '4', '5', '6', '7', '8'] as const;
+	const konnakolMap: Record<number, string[]> = {
+		1: ['Ta'],
+		2: ['Ta', 'Ka'],
+		3: ['Ta', 'Ki', 'Ta'],
+		4: ['Ta', 'Ka', 'Di', 'Mi'],
+		5: ['Ta', 'Tin', 'Ge', 'Na', 'To'],
+		6: ['Ta', 'Ki', 'Ta', 'Ta', 'Ki', 'Ta'],
+		7: ['Ta', 'Ki', 'Ta', 'Ta', 'Ka', 'Ju', 'Na'],
+		8: ['Ta', 'Ki', 'Ta', 'Ta', 'Ki', 'Ta', 'Ta', 'Ka']
+	};
 
-	let role = $state<(typeof roleOptions)[number]>('instrumentalist');
 	let bpmValue = $state(96);
 	let countIn = $state(true);
 	let isPlaying = $state(false);
 	let stage: RhythmStage = $state('idle');
 	let currentStep = $state(0);
-	let autoAdvance = $state(true);
-	let holdHere = $state(false);
-	let activeStep = $state(0);
-	let barsRemaining = $state(8);
-	let lastConfigKey = $state('');
-	let totalBars = 8;
+	let subdivision = $state('4');
+	let contextPulse = $state(true);
+	let trainerOn = $state(false);
+	let trainerTarget = $state<number | null>(null);
+	let trainerFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
+	let trainerTimer: ReturnType<typeof setTimeout> | null = null;
 	let audioReady = $state(false);
-	let rhythmMode = $state<'loop' | 'context'>('loop');
-	let contextPattern = $state<'Settled' | 'Tilted' | 'Hanging'>('Settled');
-	let contextFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
-	let contextTimer: ReturnType<typeof setTimeout> | null = null;
-	const contextPatterns = [
-		{
-			label: 'Settled',
-			grouping: [4],
-			totalSteps: 4,
-			pulseLevel: 0.8,
-			subdivisionLevel: 0.2,
-			groupingLevel: 0.2
-		},
-		{
-			label: 'Tilted',
-			grouping: [3, 3, 2],
-			totalSteps: 8,
-			pulseLevel: 0.5,
-			subdivisionLevel: 0.4,
-			groupingLevel: 0.6
-		},
-		{
-			label: 'Hanging',
-			grouping: [2, 3, 3],
-			totalSteps: 8,
-			pulseLevel: 0.4,
-			subdivisionLevel: 0.4,
-			groupingLevel: 0.7
-		}
-	] as const;
+	let lastConfigKey = $state('');
+
+	const subdivisionCount = $derived(Number(subdivision));
+	const totalSteps = $derived(subdivisionCount * 4);
+	const syllables = $derived(konnakolMap[subdivisionCount] ?? ['Ta']);
+	const steps = $derived(Array.from({ length: totalSteps }, (_, index) => index));
+	const beatNumbers = [1, 2, 3, 4];
+	const progressPercent = $derived(totalSteps ? (currentStep / totalSteps) * 100 : 0);
 
 	const engine = new RhythmEngine({
 		onTick: (tick: RhythmTick) => {
 			currentStep = tick.step;
 			stage = tick.stage;
-			if (tick.stage !== 'playing') return;
-			if (tick.step === 0) {
-				barsRemaining = Math.max(0, barsRemaining - 1);
-				if (autoAdvance && !holdHere && barsRemaining === 0) {
-					activeStep = Math.min(activeStep + 1, steps.length - 1);
-					barsRemaining = 8;
-					applyStepConfig();
-				}
-			}
 		},
 		onStageChange: (nextStage) => {
 			stage = nextStage;
 		}
 	});
 
-	const stopPlayback = () => {
-		engine.stop();
-		isPlaying = false;
-		stage = 'idle';
-		currentStep = 0;
-		barsRemaining = 8;
-		if (contextTimer) {
-			clearTimeout(contextTimer);
-			contextTimer = null;
-		}
-	};
-
 	const unlockAudio = async () => {
 		if (audioReady) return;
 		try {
-			await engine.unlock();
+			await (engine as any).unlock?.();
 			audioReady = true;
 		} catch {
 			audioReady = false;
 		}
 	};
 
-	const applyStepConfig = () => {
+	const applyConfig = () => {
 		engine.setConfig({
 			bpm: bpmValue,
-			grouping: [4],
-			totalSteps: 4,
+			grouping: Array.from({ length: 4 }, () => subdivisionCount),
+			totalSteps,
 			countIn,
 			countInBars: 1,
-			pulseLevel: activeStep === 0 ? 0.9 : activeStep === 1 ? 0.2 : 0.5,
-			subdivisionLevel: activeStep === 1 ? 0.9 : activeStep === 0 ? 0.2 : 0.6,
-			groupingLevel: 0
+			pulseLevel: contextPulse ? 0.25 : 0,
+			subdivisionLevel: 0.8,
+			groupingLevel: contextPulse ? 0.55 : 0
 		} as Partial<RhythmEngineConfig>);
 	};
 
 	const startPlayback = async () => {
 		await unlockAudio();
-		barsRemaining = 8;
-		applyStepConfig();
+		applyConfig();
 		engine.start();
 		isPlaying = true;
+		if (trainerOn && trainerTarget === null) {
+			trainerTarget = Math.floor(Math.random() * totalSteps);
+		}
 	};
 
-	const playContextPattern = async () => {
-		await unlockAudio();
-		const selection = contextPatterns[Math.floor(Math.random() * contextPatterns.length)];
-		contextPattern = selection.label;
-		contextFeedback = 'idle';
-		engine.setConfig({
-			bpm: bpmValue,
-			grouping: selection.grouping as number[],
-			totalSteps: selection.totalSteps,
-			countIn,
-			countInBars: 1,
-			pulseLevel: selection.pulseLevel,
-			subdivisionLevel: selection.subdivisionLevel,
-			groupingLevel: selection.groupingLevel
-		} as Partial<RhythmEngineConfig>);
-		engine.start();
-		isPlaying = true;
-		if (contextTimer) clearTimeout(contextTimer);
-		const durationMs = (60_000 / bpmValue) * selection.totalSteps * 2;
-		contextTimer = setTimeout(() => {
-			stopPlayback();
-		}, durationMs);
-	};
-
-	const submitContext = (choice: 'Settled' | 'Tilted' | 'Hanging') => {
-		contextFeedback = choice === contextPattern ? 'correct' : 'incorrect';
+	const stopPlayback = () => {
+		engine.stop();
+		isPlaying = false;
+		stage = 'idle';
+		currentStep = 0;
 	};
 
 	const togglePlayback = () => {
 		if (isPlaying) {
 			stopPlayback();
 		} else {
-			if (rhythmMode === 'context') {
-				void playContextPattern();
-			} else {
-				void startPlayback();
-			}
+			void startPlayback();
 		}
 	};
 
-	const stepLabel = () => steps[activeStep]?.label ?? '';
-	const stepPrompt = () => steps[activeStep]?.prompt[role] ?? '';
-	const progressPercent = $derived(((totalBars - barsRemaining) / totalBars) * 100);
+	const labelForStep = (step: number) => syllables[step % subdivisionCount] ?? '';
+	const beatForStep = (step: number) => Math.floor(step / subdivisionCount) + 1;
+	const isBeatStart = (step: number) => step % subdivisionCount === 0;
 
-	const configKey = $derived(`${bpmValue}-${countIn}`);
+	const pickTrainerTarget = () => {
+		trainerTarget = Math.floor(Math.random() * totalSteps);
+		trainerFeedback = 'idle';
+	};
+
+	const tapCell = (step: number) => {
+		if (!trainerOn) return;
+		if (trainerTarget === null) {
+			trainerTarget = step;
+			trainerFeedback = 'idle';
+			return;
+		}
+		trainerFeedback = step === trainerTarget ? 'correct' : 'incorrect';
+		if (trainerTimer) clearTimeout(trainerTimer);
+		trainerTimer = setTimeout(() => {
+			pickTrainerTarget();
+		}, 450);
+	};
+
+	const configKey = $derived(`${bpmValue}-${countIn}-${subdivision}-${contextPulse}`);
 	$effect(() => {
 		if (isPlaying && configKey !== lastConfigKey) {
 			stopPlayback();
 			startPlayback();
 		}
 		lastConfigKey = configKey;
+	});
+
+	$effect(() => {
+		if (!trainerOn) {
+			trainerTarget = null;
+			trainerFeedback = 'idle';
+			if (trainerTimer) {
+				clearTimeout(trainerTimer);
+				trainerTimer = null;
+			}
+			return;
+		}
+		if (trainerTarget === null || trainerTarget >= totalSteps) {
+			pickTrainerTarget();
+		}
 	});
 
 	onMount(() => {
@@ -247,29 +185,23 @@
 				Rhythm · Quickstart
 			</div>
 			<h1 class="font-display text-3xl font-semibold text-foreground md:text-4xl">
-				Hear → Feel → Produce
+				Hear → Place → Speak
 			</h1>
 			<p class="max-w-xl text-sm text-muted-foreground md:text-base">
-				A tight loop for beginners: pulse, subdivision, konnakol, then combine.
+				See a whole note and its subdivisions in konnakol, then place the sound in context.
 			</p>
 		</header>
 
 		<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-xl">
 			<Card.Header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 				<div>
-					<Card.Title class="font-display text-2xl">
-						{rhythmMode === 'context' ? 'Feel the groove' : stepLabel()}
-					</Card.Title>
+					<Card.Title class="font-display text-2xl">Subdivision grid</Card.Title>
 					<Card.Description class="text-base">
-						{rhythmMode === 'context'
-							? 'Which feel matches what you hear?'
-							: stepPrompt()}
+						Tap the grid to answer. Keep the pulse in your body.
 					</Card.Description>
 				</div>
 				<div class="flex items-center gap-3">
-					{#if rhythmMode === 'loop'}
-						<Badge variant="secondary" class="text-xs">Next in {barsRemaining} bars</Badge>
-					{/if}
+					<Badge variant="secondary" class="text-xs">{subdivision} per beat</Badge>
 					<div class="relative">
 						{#if isPlaying}
 							<span
@@ -278,85 +210,96 @@
 							></span>
 						{/if}
 						<Button onclick={togglePlayback} class="relative px-5">
-							{isPlaying ? 'Stop' : rhythmMode === 'context' ? 'Play feel' : 'Start'}
+							{isPlaying ? 'Stop' : 'Start'}
 						</Button>
 					</div>
 				</div>
 			</Card.Header>
 			<Card.Content class="space-y-6">
-				<div class="flex flex-wrap items-center gap-2">
-					<ToggleGroup.Root type="single" bind:value={rhythmMode} class="flex gap-2">
-						<ToggleGroup.Item value="loop" class="px-3 text-xs">Training loop</ToggleGroup.Item>
-						<ToggleGroup.Item value="context" class="px-3 text-xs">Context trainer</ToggleGroup.Item>
-					</ToggleGroup.Root>
+				<div class="grid grid-cols-4 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+					{#each beatNumbers as beat}
+						<div class="rounded-lg border border-border/60 bg-background/50 px-2 py-2">{beat}</div>
+					{/each}
 				</div>
-
-				{#if rhythmMode === 'loop'}
-					<div class="h-2 w-full rounded-full bg-border/60">
+				<div
+					class="grid gap-1"
+					style={`grid-template-columns: repeat(${totalSteps}, minmax(0, 1fr));`}
+				>
+					{#each steps as step}
+						<button
+							type="button"
+							class={`rounded-md border px-2 py-3 text-[11px] font-semibold uppercase tracking-wide transition ${
+								isBeatStart(step)
+									? 'border-primary/40 bg-[var(--surface-2)]'
+									: 'border-border/60 bg-transparent'
+							} ${
+								stage !== 'idle' && currentStep === step
+									? 'text-foreground shadow-[0_0_12px_rgba(186,120,52,0.35)]'
+									: 'text-muted-foreground'
+							} ${
+								trainerOn && trainerTarget === step
+									? 'ring-2 ring-primary/60'
+									: ''
+							}`}
+							onclick={() => tapCell(step)}
+						>
+							<div class="text-[10px] text-muted-foreground">{beatForStep(step)}</div>
+							<div>{labelForStep(step)}</div>
+						</button>
+					{/each}
+				</div>
+				<div class="h-2 w-full rounded-full bg-border/60">
+					<div class="h-full rounded-full bg-primary/70 transition-all" style={`width: ${progressPercent}%;`}></div>
+				</div>
+				<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
+					<div class="mt-2 text-sm">
+						Hear the pulse, then place the syllable in the grid. Tap the cell you hear.
+					</div>
+					{#if trainerFeedback !== 'idle'}
 						<div
-							class="h-full rounded-full bg-primary/70 transition-all"
-							style={`width: ${progressPercent}%;`}
-						></div>
-					</div>
-					<div class="grid grid-cols-4 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-						{#each syllables as syllable, index}
-							<div
-								class={`rounded-lg border border-border/60 px-2 py-3 ${
-									activeStep === 1
-										? currentStep === index && stage !== 'idle'
-											? 'bg-[var(--surface-2)] text-foreground shadow-[0_0_12px_rgba(186,120,52,0.3)]'
-											: 'bg-transparent opacity-50'
-										: currentStep === index && stage !== 'idle'
-											? 'bg-[var(--surface-2)] text-foreground'
-											: 'bg-transparent'
-								}`}
-							>
-								{syllable}
-							</div>
-						{/each}
-					</div>
-				{:else}
-					<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
-						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
-						<div class="mt-2 text-sm">Which feel label matches the groove you just heard?</div>
-						<div class="mt-4 flex flex-wrap gap-2">
-							<Button variant="secondary" onclick={() => submitContext('Settled')}>Settled</Button>
-							<Button variant="secondary" onclick={() => submitContext('Tilted')}>Tilted</Button>
-							<Button variant="secondary" onclick={() => submitContext('Hanging')}>Hanging</Button>
+							class={`mt-3 rounded-lg border border-border/60 px-3 py-2 text-sm ring-1 ${
+								trainerFeedback === 'correct'
+									? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
+									: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
+							}`}
+						>
+							{trainerFeedback === 'correct'
+								? 'Correct. Keep the pulse steady.'
+								: 'Not quite. Listen for the slot inside the beat.'}
 						</div>
-						{#if contextFeedback !== 'idle'}
-							<div
-								class={`mt-4 rounded-lg border border-border/60 px-3 py-2 text-sm ring-1 ${
-									contextFeedback === 'correct'
-										? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
-										: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
-								}`}
-							>
-								{contextFeedback === 'correct'
-									? 'Correct. Notice where the groove settles.'
-									: 'Not quite. Replay and listen for the pull.'}
-							</div>
-						{/if}
-					</div>
-				{/if}
+					{/if}
+				</div>
 			</Card.Content>
 		</Card.Root>
 
 		<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
 			<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
 				Settings
-				<span class="text-xs text-muted-foreground">Role · Tempo · Auto‑advance</span>
+				<span class="text-xs text-muted-foreground">Subdivision · Context · Tempo</span>
 			</summary>
 			<div class="mt-4 grid gap-4 md:grid-cols-3">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Role</div>
-					<ToggleGroup.Root type="single" bind:value={role} class="mt-2 flex flex-wrap gap-2">
-						{#each roleOptions as value}
-							<ToggleGroup.Item value={value} class="px-3 text-xs capitalize">
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subdivision</div>
+					<ToggleGroup.Root type="single" bind:value={subdivision} class="mt-2 flex flex-wrap gap-2">
+						{#each subdivisionOptions as value}
+							<ToggleGroup.Item value={value} class="px-3 text-xs">
 								{value}
 							</ToggleGroup.Item>
 						{/each}
 					</ToggleGroup.Root>
+					<div class="mt-2 text-xs text-muted-foreground">Default: 4 (Ta Ka Di Mi)</div>
+				</div>
+				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Context</div>
+					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+						<span class="text-xs text-muted-foreground">Pulse</span>
+						<Switch bind:checked={contextPulse} />
+					</div>
+					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+						<span class="text-xs text-muted-foreground">Trainer</span>
+						<Switch bind:checked={trainerOn} />
+					</div>
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
 					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tempo</div>
@@ -365,16 +308,9 @@
 						<span class="text-foreground">{bpmValue}</span>
 					</div>
 					<Slider type="single" min={60} max={140} step={1} bind:value={bpmValue} />
-				</div>
-				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Auto‑advance</div>
 					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
-						<span class="text-xs text-muted-foreground">Auto‑advance</span>
-						<Switch bind:checked={autoAdvance} />
-					</div>
-					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
-						<span class="text-xs text-muted-foreground">Hold here</span>
-						<Switch bind:checked={holdHere} />
+						<span class="text-xs text-muted-foreground">Count-in</span>
+						<Switch bind:checked={countIn} />
 					</div>
 				</div>
 			</div>

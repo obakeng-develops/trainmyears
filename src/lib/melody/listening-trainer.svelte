@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
@@ -7,7 +7,7 @@
 	import { Slider } from '$lib/components/ui/slider/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
-	import { MelodyEngine, type MelodyPhraseNote, type MelodyStage, type MelodyTick } from '$lib/melody/engine';
+	import { MelodyEngine } from '$lib/melody/engine';
 
 	let { bpm = $bindable(92) } = $props();
 
@@ -88,27 +88,28 @@
 	let scaleA = $state<(typeof scaleOptions)[number]>('major');
 	let scaleB = $state<(typeof scaleOptions)[number]>('melodicMinor');
 	let diminishedMode = $state<'whole-half' | 'half-whole'>('whole-half');
-	let patternCategory = $state<(typeof patternCategories)[number]>('stepwise');
+	let patternCategory = $state<(typeof patternCategories)[number]>('mixed');
 	let phraseBars = $state(4);
 	let tonic = $state('0');
 	let droneOn = $state(true);
 	let isPlaying = $state(false);
-	let stage = $state<MelodyStage>('idle');
+	let stage = $state<'idle' | 'count-in' | 'playing' | 'rest'>('idle');
 	let currentStep = $state(0);
 	let currentLabel = $state('');
 	let activeScaleLabel = $state('');
 	let currentPatternLabel = $state('');
 	let preloadTriggered = $state(false);
+	let settingsHydrated = $state(false);
+	let sequenceLength = $state(0);
+	let turnaroundStep = $state(0);
+
+	const settingsKey = 'melody-listening-settings';
 
 	const engine = new MelodyEngine({
-		onTick: (tick: MelodyTick) => {
-			stage = tick.stage;
-			currentStep = tick.step;
-			currentLabel = tick.degree;
-		},
-		onStageChange: (nextStage: MelodyStage) => {
-			stage = nextStage;
-			if (nextStage === 'idle') isPlaying = false;
+		onTick: (tick: any) => {
+			stage = tick.stage ?? 'idle';
+			currentStep = tick.step ?? 0;
+			currentLabel = String(tick.degree ?? '');
 		},
 		onLoop: (loopIndex: number) => {
 			if (mode === 'scale') {
@@ -120,7 +121,7 @@
 			}
 			applyPatternPhrase();
 		}
-	});
+	} as any);
 
 	const keyLabel = $derived(keyOptions.find((item) => String(item.pc) === tonic)?.label ?? 'C');
 	const phraseLength = $derived(Math.max(4, phraseBars * 4));
@@ -128,6 +129,12 @@
 		phraseLength ? Math.min(((currentStep + 1) / phraseLength) * 100, 100) : 0
 	);
 	const displayScale = $derived(compareOn ? `${scaleLabels[scaleA]} vs ${scaleLabels[scaleB]}` : scaleLabels[scaleSingle]);
+	const isTurnaround = $derived(
+		mode === 'scale' &&
+			stage === 'playing' &&
+			sequenceLength > 0 &&
+			currentStep % sequenceLength === turnaroundStep
+	);
 
 	const scaleOffsets = (scale: (typeof scaleOptions)[number]) => {
 		switch (scale) {
@@ -149,15 +156,17 @@
 	};
 
 	const buildScaleSequence = (offsets: number[]) => {
-		const ascending = offsets;
-		const descending = offsets.length > 1 ? offsets.slice(0, -1).reverse() : offsets;
+		const ascending = [...offsets, 12];
+		const descending = ascending.length > 1 ? ascending.slice(0, -1).reverse() : ascending;
 		return [...ascending, ...descending];
 	};
 
 	const toPhrase = (offsets: number[]) => {
 		const baseMidi = 60 + (Number(tonic) % 12);
 		const sequence = buildScaleSequence(offsets);
-		const notes: MelodyPhraseNote[] = [];
+		sequenceLength = sequence.length;
+		turnaroundStep = Math.max(0, offsets.length);
+		const notes: Array<{ degree: string; midi: number }> = [];
 		for (let i = 0; i < phraseLength; i += 1) {
 			const offset = sequence[i % sequence.length] ?? 0;
 			const midi = baseMidi + offset;
@@ -184,7 +193,9 @@
 		const pattern = choosePattern();
 		currentPatternLabel = patternLabels[patternCategory];
 		const baseMidi = 60 + (Number(tonic) % 12);
-		const notes: MelodyPhraseNote[] = [];
+		const notes: Array<{ degree: string; midi: number }> = [];
+		sequenceLength = phraseLength;
+		turnaroundStep = -1;
 		for (let i = 0; i < phraseLength; i += 1) {
 			const degreeIndex = pattern[i % pattern.length] ?? 0;
 			const offset = offsets[degreeIndex % offsets.length] ?? 0;
@@ -198,7 +209,7 @@
 	const preloadSamples = () => {
 		if (preloadTriggered) return;
 		preloadTriggered = true;
-		void engine.loadSampler();
+		void (engine as any).loadSampler?.();
 	};
 
 	const syncEngine = () => {
@@ -222,6 +233,7 @@
 		if (isPlaying) {
 			engine.stop();
 			isPlaying = false;
+			stage = 'idle';
 			return;
 		}
 		await engine.unlock();
@@ -246,6 +258,26 @@
 	});
 
 	$effect(() => {
+		if (typeof window === 'undefined') return;
+		if (!settingsHydrated) return;
+		window.localStorage.setItem(
+			settingsKey,
+			JSON.stringify({
+				mode,
+				compareOn,
+				scaleSingle,
+				scaleA,
+				scaleB,
+				diminishedMode,
+				patternCategory,
+				phraseBars,
+				tonic,
+				droneOn
+			})
+		);
+	});
+
+	$effect(() => {
 		if (mode === 'pattern' && compareOn) {
 			compareOn = false;
 		}
@@ -263,6 +295,42 @@
 	onDestroy(() => {
 		engine.stop();
 		engine.stopDrone();
+	});
+
+	onMount(() => {
+		if (typeof window === 'undefined') return;
+		const raw = window.localStorage.getItem(settingsKey);
+		if (!raw) {
+			settingsHydrated = true;
+			return;
+		}
+		try {
+			const saved = JSON.parse(raw) as Partial<{
+				mode: 'scale' | 'pattern';
+				compareOn: boolean;
+				scaleSingle: (typeof scaleOptions)[number];
+				scaleA: (typeof scaleOptions)[number];
+				scaleB: (typeof scaleOptions)[number];
+				diminishedMode: 'whole-half' | 'half-whole';
+				patternCategory: (typeof patternCategories)[number];
+				phraseBars: number;
+				tonic: string;
+				droneOn: boolean;
+			}>;
+			if (saved.mode) mode = saved.mode;
+			if (typeof saved.compareOn === 'boolean') compareOn = saved.compareOn;
+			if (saved.scaleSingle) scaleSingle = saved.scaleSingle;
+			if (saved.scaleA) scaleA = saved.scaleA;
+			if (saved.scaleB) scaleB = saved.scaleB;
+			if (saved.diminishedMode) diminishedMode = saved.diminishedMode;
+			if (saved.patternCategory) patternCategory = saved.patternCategory;
+			if (typeof saved.phraseBars === 'number') phraseBars = saved.phraseBars;
+			if (typeof saved.tonic === 'string') tonic = saved.tonic;
+			if (typeof saved.droneOn === 'boolean') droneOn = saved.droneOn;
+		} catch {
+			// ignore
+		}
+		settingsHydrated = true;
 	});
 </script>
 
@@ -287,6 +355,25 @@
 				{#if mode === 'scale' && compareOn}
 					<div class="mt-1 text-xs text-muted-foreground">Alternating: {scaleLabels[scaleA]} / {scaleLabels[scaleB]}</div>
 				{/if}
+				{#if isTurnaround}
+					<div class="mt-2">
+						<Badge variant="secondary" class="text-xs">Turnaround</Badge>
+					</div>
+				{/if}
+			</div>
+			<div class="mt-4 rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+				<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
+				<div class="mt-2 text-sm">
+					{#if mode === 'scale'}
+						{#if compareOn}
+							Which feels brighter or darker against the same tonic?
+						{:else}
+							Hear how the scale leans against the tonic: bright, dark, or tense.
+						{/if}
+					{:else}
+						Notice how the fragment outlines the scale's color.
+					{/if}
+				</div>
 			</div>
 			<div class="mt-4 grid gap-3 md:grid-cols-3">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
