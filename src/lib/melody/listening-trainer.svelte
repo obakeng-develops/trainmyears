@@ -91,6 +91,12 @@
 
 	patternBank.mixed = [...patternBank.stepwise, ...patternBank.arpeggio, ...patternBank.intervals];
 	const PATTERN_HOLD_PHRASES = 2;
+	const patternRandomnessOptions = ['guided', 'semiRandom', 'fullRandom'] as const;
+	const patternRandomnessLabels: Record<(typeof patternRandomnessOptions)[number], string> = {
+		guided: 'Guided',
+		semiRandom: 'Semi-random',
+		fullRandom: 'Full random'
+	};
 
 	let mode = $state<'scale' | 'pattern'>('scale');
 	let compareOn = $state(false);
@@ -115,8 +121,17 @@
 	let currentPatternIndex = $state(-1);
 	let currentPatternCycles = $state(0);
 	let currentPatternCategory = $state<(typeof patternCategories)[number] | null>(null);
+	let patternRandomness = $state<(typeof patternRandomnessOptions)[number]>('guided');
+	let showPhraseGuide = $state(false);
+	let phraseGuide = $state<string[]>([]);
 
 	const settingsKey = 'melody-listening-settings';
+
+	const resetPatternTracking = () => {
+		currentPatternIndex = -1;
+		currentPatternCycles = 0;
+		currentPatternCategory = null;
+	};
 
 	const engine = new MelodyEngine({
 		onTick: (tick: any) => {
@@ -195,7 +210,20 @@
 		const offsets = scaleOffsets(scale);
 		activeScaleLabel = scaleLabels[scale];
 		const phrase = toPhrase(offsets);
+		phraseGuide = phrase.map((note) => note.degree);
 		engine.setPhrase(phrase);
+	};
+
+	const pickPatternIndex = (setLength: number, avoidIndex?: number) => {
+		if (setLength <= 1) return 0;
+		let nextIndex = Math.floor(Math.random() * setLength);
+		if (avoidIndex === undefined) return nextIndex;
+		let safety = 0;
+		while (nextIndex === avoidIndex && safety < 6) {
+			nextIndex = Math.floor(Math.random() * setLength);
+			safety += 1;
+		}
+		return nextIndex;
 	};
 
 	const choosePattern = (advanceCycle: boolean) => {
@@ -207,24 +235,28 @@
 		const set = patternBank[patternCategory] ?? [];
 		if (!set.length) return [0, 1, 2, 1];
 		if (currentPatternIndex < 0 || currentPatternIndex >= set.length) {
-			currentPatternIndex = Math.floor(Math.random() * set.length);
+			currentPatternIndex = pickPatternIndex(set.length);
 			currentPatternCycles = 1;
 			return set[currentPatternIndex] ?? [0, 1, 2, 1];
 		}
 		if (advanceCycle) {
-			if (currentPatternCycles >= PATTERN_HOLD_PHRASES) {
-				if (set.length > 1) {
-					let nextIndex = Math.floor(Math.random() * set.length);
-					let safety = 0;
-					while (nextIndex === currentPatternIndex && safety < 6) {
-						nextIndex = Math.floor(Math.random() * set.length);
-						safety += 1;
+			if (patternRandomness === 'guided') {
+				if (currentPatternCycles >= PATTERN_HOLD_PHRASES) {
+					if (set.length > 1) {
+						currentPatternIndex = pickPatternIndex(set.length, currentPatternIndex);
 					}
-					currentPatternIndex = nextIndex;
+					currentPatternCycles = 1;
+				} else {
+					currentPatternCycles += 1;
+				}
+			} else if (patternRandomness === 'semiRandom') {
+				if (set.length > 1) {
+					currentPatternIndex = pickPatternIndex(set.length, currentPatternIndex);
 				}
 				currentPatternCycles = 1;
 			} else {
-				currentPatternCycles += 1;
+				currentPatternIndex = pickPatternIndex(set.length);
+				currentPatternCycles = 1;
 			}
 		}
 		return set[currentPatternIndex] ?? [0, 1, 2, 1];
@@ -245,6 +277,7 @@
 			const label = NOTE_LABELS[(Number(tonic) + offset) % 12] ?? 'C';
 			notes.push({ degree: label, midi });
 		}
+		phraseGuide = notes.map((note) => note.degree);
 		engine.setPhrase(notes);
 	};
 
@@ -296,6 +329,7 @@
 		void scaleB;
 		void diminishedMode;
 		void patternCategory;
+		void patternRandomness;
 		syncEngine();
 	});
 
@@ -312,6 +346,8 @@
 				scaleB,
 				diminishedMode,
 				patternCategory,
+				patternRandomness,
+				showPhraseGuide,
 				phraseBars,
 				tonic,
 				droneOn
@@ -322,6 +358,12 @@
 	$effect(() => {
 		if (mode === 'pattern' && compareOn) {
 			compareOn = false;
+		}
+	});
+
+	$effect(() => {
+		if (mode === 'scale') {
+			resetPatternTracking();
 		}
 	});
 
@@ -355,6 +397,8 @@
 				scaleB: (typeof scaleOptions)[number];
 				diminishedMode: 'whole-half' | 'half-whole';
 				patternCategory: (typeof patternCategories)[number];
+				patternRandomness: (typeof patternRandomnessOptions)[number];
+				showPhraseGuide: boolean;
 				phraseBars: number;
 				tonic: string;
 				droneOn: boolean;
@@ -366,6 +410,8 @@
 			if (saved.scaleB) scaleB = saved.scaleB;
 			if (saved.diminishedMode) diminishedMode = saved.diminishedMode;
 			if (saved.patternCategory) patternCategory = saved.patternCategory;
+			if (saved.patternRandomness) patternRandomness = saved.patternRandomness;
+			if (typeof saved.showPhraseGuide === 'boolean') showPhraseGuide = saved.showPhraseGuide;
 			if (typeof saved.phraseBars === 'number') phraseBars = saved.phraseBars;
 			if (typeof saved.tonic === 'string') tonic = saved.tonic;
 			if (typeof saved.droneOn === 'boolean') droneOn = saved.droneOn;
@@ -424,6 +470,24 @@
 						Notice how the fragment outlines the scale's color.
 					{/if}
 				</div>
+				<div class="mt-3 flex flex-wrap items-center gap-2">
+					<Button
+						size="sm"
+						variant="secondary"
+						onclick={() => (showPhraseGuide = !showPhraseGuide)}
+					>
+						{showPhraseGuide ? 'Hide phrase guide' : 'Reveal phrase guide'}
+					</Button>
+					<div class="text-xs text-muted-foreground">Reveal after you sing/think it once.</div>
+				</div>
+				{#if showPhraseGuide}
+					<div
+						class="mt-3 rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground"
+					>
+						{phraseGuide.slice(0, 16).join(' · ')}
+						{phraseGuide.length > 16 ? ' · ...' : ''}
+					</div>
+				{/if}
 			</div>
 			<div class="mt-4 grid gap-3 md:grid-cols-3">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
@@ -642,7 +706,29 @@
 								>
 							{/each}
 						</ToggleGroup.Root>
-						<div class="text-xs text-muted-foreground">Pattern repeats twice, then changes.</div>
+						<div class="space-y-2">
+							<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+								Randomness
+							</div>
+							<ToggleGroup.Root
+								type="single"
+								bind:value={patternRandomness}
+								class="flex flex-wrap gap-2"
+							>
+								{#each patternRandomnessOptions as option}
+									<ToggleGroup.Item value={option} class="px-3 text-xs">
+										{patternRandomnessLabels[option]}
+									</ToggleGroup.Item>
+								{/each}
+							</ToggleGroup.Root>
+						</div>
+						<div class="text-xs text-muted-foreground">
+							{patternRandomness === 'guided'
+								? 'Pattern repeats twice, then changes.'
+								: patternRandomness === 'semiRandom'
+									? 'Pattern changes every phrase with no immediate repeat.'
+									: 'Pattern is fully random each phrase.'}
+						</div>
 					</Card.Content>
 				</Card.Root>
 			{/if}
