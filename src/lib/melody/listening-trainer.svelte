@@ -368,6 +368,12 @@
 	});
 
 	$effect(() => {
+		if (mode !== 'pattern') {
+			showPhraseGuide = false;
+		}
+	});
+
+	$effect(() => {
 		if (!engine) return;
 		if (droneOn) {
 			engine.startDrone();
@@ -422,7 +428,7 @@
 	});
 </script>
 
-<div class="space-y-6" onpointerenter={preloadSamples} onpointerdown={preloadSamples}>
+<div class="space-y-6" role="group" onpointerenter={preloadSamples} onpointerdown={preloadSamples}>
 	<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-xl">
 		<Card.Header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 			<div>
@@ -661,7 +667,13 @@
 				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
 					<Card.Header>
 						<Card.Title class="font-display text-lg">Pattern Settings</Card.Title>
-						<Card.Description>Guided motifs that repeat, then vary.</Card.Description>
+						<Card.Description>
+							{patternRandomness === 'guided'
+								? 'Guided motifs that repeat, then vary.'
+								: patternRandomness === 'semiRandom'
+									? 'Motifs vary every phrase without immediate repeats.'
+									: 'Fully random motif selection each phrase.'}
+						</Card.Description>
 					</Card.Header>
 					<Card.Content class="space-y-4">
 						<div class="space-y-2">
