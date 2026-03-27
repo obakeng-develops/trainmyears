@@ -69,6 +69,12 @@
 		]
 	};
 	const PATTERN_HOLD_PHRASES = 2;
+	const quickstartFocusOptions = ['easy', 'balanced', 'challenging'] as const;
+	const quickstartFocusLabels: Record<(typeof quickstartFocusOptions)[number], string> = {
+		easy: 'Easy',
+		balanced: 'Balanced',
+		challenging: 'Challenging'
+	};
 
 	let mode = $state<'scale' | 'pattern'>('scale');
 	let scaleSingle = $state<(typeof scaleOptions)[number]>('major');
@@ -86,8 +92,29 @@
 	let turnaroundStep = $state(0);
 	let currentPatternIndex = $state(-1);
 	let currentPatternCycles = $state(0);
+	let currentPatternPoolKey = $state('');
+	let quickstartFocus = $state<(typeof quickstartFocusOptions)[number]>('balanced');
+	let showPhraseGuide = $state(false);
+	let phraseGuide = $state<string[]>([]);
 
 	const settingsKey = 'melody-listening-settings';
+
+	const getPatternPool = () => {
+		const set = patternBank.mixed ?? [];
+		if (quickstartFocus === 'easy') {
+			return set.filter((_, index) => [0, 1, 2].includes(index));
+		}
+		if (quickstartFocus === 'challenging') {
+			return set.filter((_, index) => [3, 5, 6].includes(index));
+		}
+		return set;
+	};
+
+	const resetPatternTracking = () => {
+		currentPatternIndex = -1;
+		currentPatternCycles = 0;
+		currentPatternPoolKey = '';
+	};
 
 	const engine = new MelodyEngine({
 		onTick: (tick: any) => {
@@ -158,6 +185,7 @@
 	const applyScalePhrase = () => {
 		const offsets = scaleOffsets(scaleSingle);
 		const phrase = toPhrase(offsets);
+		phraseGuide = phrase.map((note) => note.degree);
 		engine.setPhrase(phrase);
 	};
 
@@ -173,7 +201,13 @@
 	};
 
 	const choosePattern = (advanceCycle: boolean) => {
-		const set = patternBank.mixed ?? [];
+		const set = getPatternPool();
+		const poolKey = `${quickstartFocus}-${set.length}`;
+		if (currentPatternPoolKey !== poolKey) {
+			currentPatternPoolKey = poolKey;
+			currentPatternIndex = -1;
+			currentPatternCycles = 0;
+		}
 		if (!set.length) return [0, 1, 2, 1];
 		if (currentPatternIndex < 0 || currentPatternIndex >= set.length) {
 			currentPatternIndex = Math.floor(Math.random() * set.length);
@@ -203,6 +237,7 @@
 			const label = NOTE_LABELS[(Number(tonic) + offset) % 12] ?? 'C';
 			notes.push({ degree: label, midi });
 		}
+		phraseGuide = notes.map((note) => note.degree);
 		engine.setPhrase(notes);
 	};
 
@@ -270,6 +305,12 @@
 	});
 
 	$effect(() => {
+		if (mode === 'scale') {
+			resetPatternTracking();
+		}
+	});
+
+	$effect(() => {
 		if (typeof window === 'undefined') return;
 		if (!settingsHydrated) return;
 		window.localStorage.setItem(
@@ -278,6 +319,8 @@
 				mode,
 				scaleSingle,
 				diminishedMode,
+				quickstartFocus,
+				showPhraseGuide,
 				phraseBars,
 				tonic,
 				droneOn
@@ -297,6 +340,8 @@
 				mode: 'scale' | 'pattern';
 				scaleSingle: (typeof scaleOptions)[number];
 				diminishedMode: 'whole-half' | 'half-whole';
+				quickstartFocus: (typeof quickstartFocusOptions)[number];
+				showPhraseGuide: boolean;
 				phraseBars: number;
 				tonic: string;
 				droneOn: boolean;
@@ -304,6 +349,8 @@
 			if (saved.mode) mode = saved.mode;
 			if (saved.scaleSingle) scaleSingle = saved.scaleSingle;
 			if (saved.diminishedMode) diminishedMode = saved.diminishedMode;
+			if (saved.quickstartFocus) quickstartFocus = saved.quickstartFocus;
+			if (typeof saved.showPhraseGuide === 'boolean') showPhraseGuide = saved.showPhraseGuide;
 			if (typeof saved.phraseBars === 'number') phraseBars = saved.phraseBars;
 			if (typeof saved.tonic === 'string') tonic = saved.tonic;
 			if (typeof saved.droneOn === 'boolean') droneOn = saved.droneOn;
@@ -354,6 +401,26 @@
 						? 'Hear how the scale leans against the tonic: bright, dark, or tense.'
 						: 'Notice the motif shape; it repeats twice, then shifts.'}
 				</div>
+				<div class="mt-3 flex flex-wrap items-center gap-2">
+					<Button
+						size="sm"
+						variant="secondary"
+						onclick={() => (showPhraseGuide = !showPhraseGuide)}
+					>
+						{showPhraseGuide ? 'Hide phrase guide' : 'Reveal phrase guide'}
+					</Button>
+					<div class="text-xs text-muted-foreground">
+						Use after your first mental/voice recall attempt.
+					</div>
+				</div>
+				{#if showPhraseGuide}
+					<div
+						class="mt-3 rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground"
+					>
+						{phraseGuide.slice(0, 12).join(' · ')}
+						{phraseGuide.length > 12 ? ' · ...' : ''}
+					</div>
+				{/if}
 			</div>
 			<div class="grid gap-4 md:grid-cols-2">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
@@ -379,6 +446,27 @@
 							{/each}
 						</Select.Content>
 					</Select.Root>
+				</div>
+			</div>
+			<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+				<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Focus</div>
+				<ToggleGroup.Root
+					type="single"
+					bind:value={quickstartFocus}
+					class="mt-2 flex flex-wrap gap-2"
+				>
+					{#each quickstartFocusOptions as option}
+						<ToggleGroup.Item value={option} class="px-3 text-xs">
+							{quickstartFocusLabels[option]}
+						</ToggleGroup.Item>
+					{/each}
+				</ToggleGroup.Root>
+				<div class="mt-2 text-xs text-muted-foreground">
+					{quickstartFocus === 'easy'
+						? 'Mostly stepwise motifs.'
+						: quickstartFocus === 'challenging'
+							? 'Wider interval motifs.'
+							: 'Balanced mix of motifs.'}
 				</div>
 			</div>
 			{#if mode === 'scale'}
