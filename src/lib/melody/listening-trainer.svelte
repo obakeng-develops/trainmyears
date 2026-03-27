@@ -44,7 +44,20 @@
 		{ label: 'B', pc: 11 }
 	];
 
-	const NOTE_LABELS = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F', 'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B'];
+	const NOTE_LABELS = [
+		'C',
+		'C#/Db',
+		'D',
+		'D#/Eb',
+		'E',
+		'F',
+		'F#/Gb',
+		'G',
+		'G#/Ab',
+		'A',
+		'A#/Bb',
+		'B'
+	];
 
 	const patternCategories = ['stepwise', 'arpeggio', 'intervals', 'mixed'] as const;
 	const patternLabels: Record<(typeof patternCategories)[number], string> = {
@@ -76,11 +89,8 @@
 		mixed: []
 	};
 
-	patternBank.mixed = [
-		...patternBank.stepwise,
-		...patternBank.arpeggio,
-		...patternBank.intervals
-	];
+	patternBank.mixed = [...patternBank.stepwise, ...patternBank.arpeggio, ...patternBank.intervals];
+	const PATTERN_HOLD_PHRASES = 2;
 
 	let mode = $state<'scale' | 'pattern'>('scale');
 	let compareOn = $state(false);
@@ -102,6 +112,9 @@
 	let settingsHydrated = $state(false);
 	let sequenceLength = $state(0);
 	let turnaroundStep = $state(0);
+	let currentPatternIndex = $state(-1);
+	let currentPatternCycles = $state(0);
+	let currentPatternCategory = $state<(typeof patternCategories)[number] | null>(null);
 
 	const settingsKey = 'melody-listening-settings';
 
@@ -119,7 +132,7 @@
 				}
 				return;
 			}
-			applyPatternPhrase();
+			applyPatternPhrase({ advanceCycle: true });
 		}
 	} as any);
 
@@ -128,7 +141,9 @@
 	const progressPercent = $derived(
 		phraseLength ? Math.min(((currentStep + 1) / phraseLength) * 100, 100) : 0
 	);
-	const displayScale = $derived(compareOn ? `${scaleLabels[scaleA]} vs ${scaleLabels[scaleB]}` : scaleLabels[scaleSingle]);
+	const displayScale = $derived(
+		compareOn ? `${scaleLabels[scaleA]} vs ${scaleLabels[scaleB]}` : scaleLabels[scaleSingle]
+	);
 	const isTurnaround = $derived(
 		mode === 'scale' &&
 			stage === 'playing' &&
@@ -183,14 +198,41 @@
 		engine.setPhrase(phrase);
 	};
 
-	const choosePattern = () => {
+	const choosePattern = (advanceCycle: boolean) => {
+		if (currentPatternCategory !== patternCategory) {
+			currentPatternCategory = patternCategory;
+			currentPatternIndex = -1;
+			currentPatternCycles = 0;
+		}
 		const set = patternBank[patternCategory] ?? [];
-		return set[Math.floor(Math.random() * set.length)] ?? [0, 1, 2, 1];
+		if (!set.length) return [0, 1, 2, 1];
+		if (currentPatternIndex < 0 || currentPatternIndex >= set.length) {
+			currentPatternIndex = Math.floor(Math.random() * set.length);
+			currentPatternCycles = 1;
+			return set[currentPatternIndex] ?? [0, 1, 2, 1];
+		}
+		if (advanceCycle) {
+			if (currentPatternCycles >= PATTERN_HOLD_PHRASES) {
+				if (set.length > 1) {
+					let nextIndex = Math.floor(Math.random() * set.length);
+					let safety = 0;
+					while (nextIndex === currentPatternIndex && safety < 6) {
+						nextIndex = Math.floor(Math.random() * set.length);
+						safety += 1;
+					}
+					currentPatternIndex = nextIndex;
+				}
+				currentPatternCycles = 1;
+			} else {
+				currentPatternCycles += 1;
+			}
+		}
+		return set[currentPatternIndex] ?? [0, 1, 2, 1];
 	};
 
-	const applyPatternPhrase = () => {
+	const applyPatternPhrase = ({ advanceCycle = false }: { advanceCycle?: boolean } = {}) => {
 		const offsets = scaleOffsets(compareOn ? scaleA : scaleSingle);
-		const pattern = choosePattern();
+		const pattern = choosePattern(advanceCycle);
 		currentPatternLabel = patternLabels[patternCategory];
 		const baseMidi = 60 + (Number(tonic) % 12);
 		const notes: Array<{ degree: string; midi: number }> = [];
@@ -226,7 +268,7 @@
 			applyScalePhrase(compareOn ? scaleA : scaleSingle);
 			return;
 		}
-		applyPatternPhrase();
+		applyPatternPhrase({ advanceCycle: false });
 	};
 
 	const togglePlayback = async () => {
@@ -348,12 +390,18 @@
 		</Card.Header>
 		<Card.Content>
 			<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
-				<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Now hearing</div>
+				<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+					Now hearing
+				</div>
 				<div class="mt-2 text-sm">
-					{mode === 'scale' ? `${displayScale} in ${keyLabel}` : `${patternLabels[patternCategory]} in ${keyLabel}`}
+					{mode === 'scale'
+						? `${displayScale} in ${keyLabel}`
+						: `${patternLabels[patternCategory]} in ${keyLabel}`}
 				</div>
 				{#if mode === 'scale' && compareOn}
-					<div class="mt-1 text-xs text-muted-foreground">Alternating: {scaleLabels[scaleA]} / {scaleLabels[scaleB]}</div>
+					<div class="mt-1 text-xs text-muted-foreground">
+						Alternating: {scaleLabels[scaleA]} / {scaleLabels[scaleB]}
+					</div>
 				{/if}
 				{#if isTurnaround}
 					<div class="mt-2">
@@ -362,7 +410,9 @@
 				{/if}
 			</div>
 			<div class="mt-4 rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
-				<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
+				<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+					What to listen for
+				</div>
 				<div class="mt-2 text-sm">
 					{#if mode === 'scale'}
 						{#if compareOn}
@@ -377,23 +427,35 @@
 			</div>
 			<div class="mt-4 grid gap-3 md:grid-cols-3">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mode</div>
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Mode
+					</div>
 					<div class="text-sm font-semibold">{mode === 'scale' ? 'Scale' : 'Pattern'}</div>
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Phrase</div>
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Phrase
+					</div>
 					<div class="text-sm font-semibold">{phraseBars} bars</div>
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Playhead</div>
-					<div class="text-sm font-semibold">{Math.min(currentStep + 1, phraseLength)}/{phraseLength}</div>
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Playhead
+					</div>
+					<div class="text-sm font-semibold">
+						{Math.min(currentStep + 1, phraseLength)}/{phraseLength}
+					</div>
 				</div>
 			</div>
 			<div class="mt-4 h-2 w-full rounded-full bg-border/60">
 				<div class="h-full rounded-full bg-primary/70" style={`width: ${progressPercent}%`}></div>
 			</div>
 			<div class="mt-2 text-xs text-muted-foreground">
-				{stage === 'playing' ? `Current note: ${currentLabel}` : stage === 'idle' ? 'Stopped' : stage}
+				{stage === 'playing'
+					? `Current note: ${currentLabel}`
+					: stage === 'idle'
+						? 'Stopped'
+						: stage}
 			</div>
 		</Card.Content>
 	</Card.Root>
@@ -410,7 +472,9 @@
 						<ToggleGroup.Item value="scale" class="px-3 text-xs">Scale</ToggleGroup.Item>
 						<ToggleGroup.Item value="pattern" class="px-3 text-xs">Pattern</ToggleGroup.Item>
 					</ToggleGroup.Root>
-					<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+					<div
+						class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+					>
 						<span class="text-xs text-muted-foreground">Drone</span>
 						<Switch bind:checked={droneOn} />
 					</div>
@@ -459,43 +523,71 @@
 						<Card.Description>Choose the scale set to sing along with.</Card.Description>
 					</Card.Header>
 					<Card.Content class="space-y-4">
-						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+						<div
+							class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+						>
 							<span class="text-xs text-muted-foreground">Compare scales</span>
 							<Switch bind:checked={compareOn} />
 						</div>
 						{#if compareOn}
 							<div class="space-y-2">
-								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scale A</div>
+								<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+									Scale A
+								</div>
 								<ToggleGroup.Root type="single" bind:value={scaleA} class="flex flex-wrap gap-2">
 									{#each scaleOptions as option}
-										<ToggleGroup.Item value={option} class="px-3 text-xs">{scaleLabels[option]}</ToggleGroup.Item>
+										<ToggleGroup.Item value={option} class="px-3 text-xs"
+											>{scaleLabels[option]}</ToggleGroup.Item
+										>
 									{/each}
 								</ToggleGroup.Root>
 							</div>
 							<div class="space-y-2">
-								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scale B</div>
+								<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+									Scale B
+								</div>
 								<ToggleGroup.Root type="single" bind:value={scaleB} class="flex flex-wrap gap-2">
 									{#each scaleOptions as option}
-										<ToggleGroup.Item value={option} class="px-3 text-xs">{scaleLabels[option]}</ToggleGroup.Item>
+										<ToggleGroup.Item value={option} class="px-3 text-xs"
+											>{scaleLabels[option]}</ToggleGroup.Item
+										>
 									{/each}
 								</ToggleGroup.Root>
 							</div>
 						{:else}
 							<div class="space-y-2">
-								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scale</div>
-								<ToggleGroup.Root type="single" bind:value={scaleSingle} class="flex flex-wrap gap-2">
+								<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+									Scale
+								</div>
+								<ToggleGroup.Root
+									type="single"
+									bind:value={scaleSingle}
+									class="flex flex-wrap gap-2"
+								>
 									{#each scaleOptions as option}
-										<ToggleGroup.Item value={option} class="px-3 text-xs">{scaleLabels[option]}</ToggleGroup.Item>
+										<ToggleGroup.Item value={option} class="px-3 text-xs"
+											>{scaleLabels[option]}</ToggleGroup.Item
+										>
 									{/each}
 								</ToggleGroup.Root>
 							</div>
 						{/if}
-						{#if (compareOn ? scaleA === 'diminished' || scaleB === 'diminished' : scaleSingle === 'diminished')}
+						{#if compareOn ? scaleA === 'diminished' || scaleB === 'diminished' : scaleSingle === 'diminished'}
 							<div class="space-y-2">
-								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Diminished pattern</div>
-								<ToggleGroup.Root type="single" bind:value={diminishedMode} class="flex flex-wrap gap-2">
-									<ToggleGroup.Item value="whole-half" class="px-3 text-xs">Whole-Half</ToggleGroup.Item>
-									<ToggleGroup.Item value="half-whole" class="px-3 text-xs">Half-Whole</ToggleGroup.Item>
+								<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+									Diminished pattern
+								</div>
+								<ToggleGroup.Root
+									type="single"
+									bind:value={diminishedMode}
+									class="flex flex-wrap gap-2"
+								>
+									<ToggleGroup.Item value="whole-half" class="px-3 text-xs"
+										>Whole-Half</ToggleGroup.Item
+									>
+									<ToggleGroup.Item value="half-whole" class="px-3 text-xs"
+										>Half-Whole</ToggleGroup.Item
+									>
 								</ToggleGroup.Root>
 							</div>
 						{/if}
@@ -505,34 +597,52 @@
 				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
 					<Card.Header>
 						<Card.Title class="font-display text-lg">Pattern Settings</Card.Title>
-						<Card.Description>Randomized fragments per phrase.</Card.Description>
+						<Card.Description>Guided motifs that repeat, then vary.</Card.Description>
 					</Card.Header>
 					<Card.Content class="space-y-4">
 						<div class="space-y-2">
-							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scale</div>
+							<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+								Scale
+							</div>
 							<ToggleGroup.Root type="single" bind:value={scaleSingle} class="flex flex-wrap gap-2">
 								{#each scaleOptions as option}
-									<ToggleGroup.Item value={option} class="px-3 text-xs">{scaleLabels[option]}</ToggleGroup.Item>
+									<ToggleGroup.Item value={option} class="px-3 text-xs"
+										>{scaleLabels[option]}</ToggleGroup.Item
+									>
 								{/each}
 							</ToggleGroup.Root>
 						</div>
 						{#if scaleSingle === 'diminished'}
 							<div class="space-y-2">
-								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Diminished pattern</div>
-								<ToggleGroup.Root type="single" bind:value={diminishedMode} class="flex flex-wrap gap-2">
-									<ToggleGroup.Item value="whole-half" class="px-3 text-xs">Whole-Half</ToggleGroup.Item>
-									<ToggleGroup.Item value="half-whole" class="px-3 text-xs">Half-Whole</ToggleGroup.Item>
+								<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+									Diminished pattern
+								</div>
+								<ToggleGroup.Root
+									type="single"
+									bind:value={diminishedMode}
+									class="flex flex-wrap gap-2"
+								>
+									<ToggleGroup.Item value="whole-half" class="px-3 text-xs"
+										>Whole-Half</ToggleGroup.Item
+									>
+									<ToggleGroup.Item value="half-whole" class="px-3 text-xs"
+										>Half-Whole</ToggleGroup.Item
+									>
 								</ToggleGroup.Root>
 							</div>
 						{/if}
-						<ToggleGroup.Root type="single" bind:value={patternCategory} class="flex flex-wrap gap-2">
+						<ToggleGroup.Root
+							type="single"
+							bind:value={patternCategory}
+							class="flex flex-wrap gap-2"
+						>
 							{#each patternCategories as category}
-								<ToggleGroup.Item value={category} class="px-3 text-xs">{patternLabels[category]}</ToggleGroup.Item>
+								<ToggleGroup.Item value={category} class="px-3 text-xs"
+									>{patternLabels[category]}</ToggleGroup.Item
+								>
 							{/each}
 						</ToggleGroup.Root>
-						<div class="text-xs text-muted-foreground">
-							Pattern changes every phrase.
-						</div>
+						<div class="text-xs text-muted-foreground">Pattern repeats twice, then changes.</div>
 					</Card.Content>
 				</Card.Root>
 			{/if}
