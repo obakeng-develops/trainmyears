@@ -285,6 +285,7 @@
 		void mode;
 		void scaleSingle;
 		void diminishedMode;
+		void quickstartFocus;
 		syncEngine();
 	});
 
@@ -307,6 +308,12 @@
 	$effect(() => {
 		if (mode === 'scale') {
 			resetPatternTracking();
+		}
+	});
+
+	$effect(() => {
+		if (mode !== 'pattern') {
+			showPhraseGuide = false;
 		}
 	});
 
@@ -366,7 +373,7 @@
 	});
 </script>
 
-<div class="space-y-6" onpointerenter={preloadSamples} onpointerdown={preloadSamples}>
+<div class="space-y-6" role="group" onpointerenter={preloadSamples} onpointerdown={preloadSamples}>
 	<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-xl">
 		<Card.Header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 			<div>
