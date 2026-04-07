@@ -109,25 +109,24 @@ const DIATONIC_MINOR = ['1', '2', 'b3', '4', '5', 'b6', 'b7'];
 
 const DEGREE_OFFSETS: Record<string, number> = {
 	'1': 0,
-	'b2': 1,
+	b2: 1,
 	'2': 2,
 	'#2': 3,
-	'b3': 3,
+	b3: 3,
 	'3': 4,
 	'4': 5,
 	'#4': 6,
-	'b5': 6,
+	b5: 6,
 	'5': 7,
 	'#5': 8,
-	'b6': 8,
+	b6: 8,
 	'6': 9,
 	'#6': 10,
-	'b7': 10,
+	b7: 10,
 	'7': 11
 };
 
-const clamp = (value: number, min: number, max: number) =>
-	Math.min(max, Math.max(min, value));
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 export class MelodyEngine {
 	private config: MelodyEngineConfig = { ...DEFAULT_CONFIG };
@@ -139,7 +138,7 @@ export class MelodyEngine {
 	private samplerReady = false;
 	private samplerLoading: Promise<void> | null = null;
 	private toneStarted = false;
-	private droneOsc: import('tone').Oscillator | null = null;
+	private droneOscillators: import('tone').Oscillator[] = [];
 	private droneGain: import('tone').Gain | null = null;
 	private droneFilter: import('tone').Filter | null = null;
 	private schedulerTimer: ReturnType<typeof setInterval> | null = null;
@@ -264,48 +263,61 @@ export class MelodyEngine {
 		if (!tone) return;
 		const baseMidi = 60 + (this.config.keyPc % 12);
 		const freq = tone.Frequency(baseMidi, 'midi').toFrequency();
+		const fifthFreq = tone.Frequency(baseMidi + 7, 'midi').toFrequency();
 		this.stopDrone();
 		this.droneGain = new tone.Gain(0).toDestination();
 		this.droneFilter = new tone.Filter({
-			frequency: 700,
+			frequency: 540,
 			type: 'lowpass',
-			Q: 0.3
+			Q: 0.45
 		});
-		this.droneOsc = new tone.Oscillator(freq, 'sine');
-		this.droneOsc.connect(this.droneFilter);
-		this.droneFilter.connect(this.droneGain);
-		this.droneGain.gain.rampTo(0.16, 0.2);
-		this.droneOsc.start();
+		const rootOsc = new tone.Oscillator(freq, 'sine');
+		const fifthOsc = new tone.Oscillator(fifthFreq, 'triangle');
+		rootOsc.volume.value = -8;
+		fifthOsc.volume.value = -17;
+		this.droneOscillators = [rootOsc, fifthOsc];
+		const filter = this.droneFilter;
+		if (filter) {
+			this.droneOscillators.forEach((osc) => osc.connect(filter));
+			filter.connect(this.droneGain);
+		}
+		const now = tone.now();
+		this.droneGain.gain.cancelScheduledValues(now);
+		this.droneGain.gain.setValueAtTime(0, now);
+		this.droneGain.gain.linearRampToValueAtTime(0.14, now + 0.8);
+		this.droneOscillators.forEach((osc) => osc.start());
 	}
 
 	stopDrone() {
 		const tone = this.tone;
 		const now = tone?.now() ?? 0;
-		const release = 0.2;
+		const release = 0.9;
 		const cleanupDelay = (release + 0.05) * 1000;
 		if (this.droneGain) {
 			try {
-				this.droneGain.gain.rampTo(0.0001, release);
+				this.droneGain.gain.cancelScheduledValues(now);
+				this.droneGain.gain.setValueAtTime(this.droneGain.gain.value, now);
+				this.droneGain.gain.linearRampToValueAtTime(0.0001, now + release);
 			} catch {
 				// ignore
 			}
 		}
-		const osc = this.droneOsc;
+		const oscillators = [...this.droneOscillators];
 		const filter = this.droneFilter;
 		const gain = this.droneGain;
-		this.droneOsc = null;
+		this.droneOscillators = [];
 		this.droneFilter = null;
 		this.droneGain = null;
-		if (osc) {
+		oscillators.forEach((osc) => {
 			try {
 				osc.stop(now + release + 0.02);
 			} catch {
 				// ignore
 			}
-		}
+		});
 		setTimeout(() => {
 			try {
-				osc?.dispose();
+				oscillators.forEach((osc) => osc.dispose());
 				filter?.dispose();
 				gain?.dispose();
 			} catch {
@@ -319,16 +331,15 @@ export class MelodyEngine {
 		const allowedDegrees = this.getAllowedDegrees(mode);
 		if (!allowedDegrees.length) return this.phrase;
 		const phrase: MelodyPhraseNote[] = [];
-		let lastDegree = startOnTonic && allowedDegrees.includes('1')
-			? '1'
-			: this.pickStartDegree(allowedDegrees, startOnTonic);
+		let lastDegree =
+			startOnTonic && allowedDegrees.includes('1')
+				? '1'
+				: this.pickStartDegree(allowedDegrees, startOnTonic);
 		let lastBase = this.degreeBase(lastDegree);
 		let lastMidi: number | null = null;
 		for (let i = 0; i < phraseLength; i += 1) {
 			const degree =
-				i === 0
-					? lastDegree
-					: this.pickNextDegree(allowedDegrees, lastBase, maxLeap, lastDegree);
+				i === 0 ? lastDegree : this.pickNextDegree(allowedDegrees, lastBase, maxLeap, lastDegree);
 			const midi = this.degreeToMidi(degree, lastMidi ?? undefined);
 			phrase.push({ degree, midi });
 			lastDegree = degree;
@@ -468,12 +479,7 @@ export class MelodyEngine {
 		this.rafId = requestAnimationFrame(() => this.updateUi());
 	}
 
-	private pickNextDegree(
-		allowed: string[],
-		lastBase: number,
-		maxLeap: number,
-		fallback: string
-	) {
+	private pickNextDegree(allowed: string[], lastBase: number, maxLeap: number, fallback: string) {
 		const candidates = allowed.filter((degree) => {
 			const base = this.degreeBase(degree);
 			return Math.abs(base - lastBase) <= maxLeap;
@@ -530,7 +536,9 @@ export class MelodyEngine {
 	}
 
 	private getAllowedDegrees(mode: MelodyEngineConfig['mode']) {
-		const allowed = this.config.allowedDegrees.filter((degree) => DEGREE_OFFSETS[degree] !== undefined);
+		const allowed = this.config.allowedDegrees.filter(
+			(degree) => DEGREE_OFFSETS[degree] !== undefined
+		);
 		if (allowed.length) return allowed;
 		return mode === 'minor' ? [...DIATONIC_MINOR] : [...DIATONIC_MAJOR];
 	}

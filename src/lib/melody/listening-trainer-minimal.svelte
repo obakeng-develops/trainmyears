@@ -10,7 +10,14 @@
 
 	let { bpm = $bindable(92) } = $props();
 
-	const scaleOptions = ['major', 'naturalMinor', 'harmonicMinor', 'melodicMinor', 'diminished', 'wholeTone'] as const;
+	const scaleOptions = [
+		'major',
+		'naturalMinor',
+		'harmonicMinor',
+		'melodicMinor',
+		'diminished',
+		'wholeTone'
+	] as const;
 	const scaleLabels: Record<(typeof scaleOptions)[number], string> = {
 		major: 'Major',
 		naturalMinor: 'Natural Minor',
@@ -35,7 +42,20 @@
 		{ label: 'B', pc: 11 }
 	];
 
-	const NOTE_LABELS = ['C', 'C#/Db', 'D', 'D#/Eb', 'E', 'F', 'F#/Gb', 'G', 'G#/Ab', 'A', 'A#/Bb', 'B'];
+	const NOTE_LABELS = [
+		'C',
+		'C#/Db',
+		'D',
+		'D#/Eb',
+		'E',
+		'F',
+		'F#/Gb',
+		'G',
+		'G#/Ab',
+		'A',
+		'A#/Bb',
+		'B'
+	];
 	const patternCategories = ['mixed'] as const;
 	const patternBank: Record<(typeof patternCategories)[number], number[][]> = {
 		mixed: [
@@ -48,6 +68,7 @@
 			[0, 4, 2, 5]
 		]
 	};
+	const PATTERN_HOLD_PHRASES = 2;
 
 	let mode = $state<'scale' | 'pattern'>('scale');
 	let scaleSingle = $state<(typeof scaleOptions)[number]>('major');
@@ -63,6 +84,8 @@
 	let settingsHydrated = $state(false);
 	let sequenceLength = $state(0);
 	let turnaroundStep = $state(0);
+	let currentPatternIndex = $state(-1);
+	let currentPatternCycles = $state(0);
 
 	const settingsKey = 'melody-listening-settings';
 
@@ -71,6 +94,11 @@
 			stage = tick.stage ?? 'idle';
 			currentStep = tick.step ?? 0;
 			currentLabel = String(tick.degree ?? '');
+		},
+		onLoop: () => {
+			if (mode === 'pattern') {
+				applyPatternPhrase({ advanceCycle: true });
+			}
 		}
 	} as any);
 
@@ -133,14 +161,37 @@
 		engine.setPhrase(phrase);
 	};
 
-	const choosePattern = () => {
-		const set = patternBank.mixed ?? [];
-		return set[Math.floor(Math.random() * set.length)] ?? [0, 1, 2, 1];
+	const choosePatternIndex = (setLength: number, avoidIndex: number) => {
+		if (setLength <= 1) return 0;
+		let nextIndex = Math.floor(Math.random() * setLength);
+		let safety = 0;
+		while (nextIndex === avoidIndex && safety < 6) {
+			nextIndex = Math.floor(Math.random() * setLength);
+			safety += 1;
+		}
+		return nextIndex;
 	};
 
-	const applyPatternPhrase = () => {
+	const choosePattern = (advanceCycle: boolean) => {
+		const set = patternBank.mixed ?? [];
+		if (!set.length) return [0, 1, 2, 1];
+		if (currentPatternIndex < 0 || currentPatternIndex >= set.length) {
+			currentPatternIndex = Math.floor(Math.random() * set.length);
+			currentPatternCycles = 1;
+		} else if (advanceCycle) {
+			if (currentPatternCycles >= PATTERN_HOLD_PHRASES) {
+				currentPatternIndex = choosePatternIndex(set.length, currentPatternIndex);
+				currentPatternCycles = 1;
+			} else {
+				currentPatternCycles += 1;
+			}
+		}
+		return set[currentPatternIndex] ?? [0, 1, 2, 1];
+	};
+
+	const applyPatternPhrase = ({ advanceCycle = false }: { advanceCycle?: boolean } = {}) => {
 		const offsets = scaleOffsets(scaleSingle);
-		const pattern = choosePattern();
+		const pattern = choosePattern(advanceCycle);
 		const baseMidi = 60 + (Number(tonic) % 12);
 		const notes: Array<{ degree: string; midi: number }> = [];
 		sequenceLength = phraseLength;
@@ -175,7 +226,7 @@
 			applyScalePhrase();
 			return;
 		}
-		applyPatternPhrase();
+		applyPatternPhrase({ advanceCycle: false });
 	};
 
 	const togglePlayback = async () => {
@@ -214,7 +265,7 @@
 	$effect(() => {
 		if (mode === 'pattern') {
 			// keep scale context for pattern mode
-			applyPatternPhrase();
+			applyPatternPhrase({ advanceCycle: false });
 		}
 	});
 
@@ -282,7 +333,9 @@
 		</Card.Header>
 		<Card.Content class="space-y-6">
 			<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
-				<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Now hearing</div>
+				<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+					Now hearing
+				</div>
 				<div class="mt-2 text-sm">
 					{mode === 'scale' ? `${displayScale} in ${keyLabel}` : `Pattern in ${keyLabel}`}
 				</div>
@@ -293,23 +346,29 @@
 				{/if}
 			</div>
 			<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
-				<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
+				<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+					What to listen for
+				</div>
 				<div class="mt-2 text-sm">
 					{mode === 'scale'
 						? 'Hear how the scale leans against the tonic: bright, dark, or tense.'
-						: "Notice how the fragment outlines the scale's color."}
+						: 'Notice the motif shape; it repeats twice, then shifts.'}
 				</div>
 			</div>
 			<div class="grid gap-4 md:grid-cols-2">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mode</div>
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Mode
+					</div>
 					<ToggleGroup.Root type="single" bind:value={mode} class="mt-2 flex flex-wrap gap-2">
 						<ToggleGroup.Item value="scale" class="px-3 text-xs">Scale</ToggleGroup.Item>
 						<ToggleGroup.Item value="pattern" class="px-3 text-xs">Pattern</ToggleGroup.Item>
 					</ToggleGroup.Root>
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tonic</div>
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Tonic
+					</div>
 					<Select.Root type="single" bind:value={tonic as never}>
 						<Select.Trigger class="w-full">
 							<span>{keyLabel}</span>
@@ -324,23 +383,41 @@
 			</div>
 			{#if mode === 'scale'}
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scale</div>
-					<ToggleGroup.Root type="single" bind:value={scaleSingle} class="mt-2 flex flex-wrap gap-2">
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Scale
+					</div>
+					<ToggleGroup.Root
+						type="single"
+						bind:value={scaleSingle}
+						class="mt-2 flex flex-wrap gap-2"
+					>
 						{#each scaleOptions as option}
-							<ToggleGroup.Item value={option} class="px-3 text-xs">{scaleLabels[option]}</ToggleGroup.Item>
+							<ToggleGroup.Item value={option} class="px-3 text-xs"
+								>{scaleLabels[option]}</ToggleGroup.Item
+							>
 						{/each}
 					</ToggleGroup.Root>
 					{#if scaleSingle === 'diminished'}
 						<div class="mt-3 flex flex-wrap gap-2">
-							<ToggleGroup.Root type="single" bind:value={diminishedMode} class="flex flex-wrap gap-2">
-								<ToggleGroup.Item value="whole-half" class="px-3 text-xs">Whole-Half</ToggleGroup.Item>
-								<ToggleGroup.Item value="half-whole" class="px-3 text-xs">Half-Whole</ToggleGroup.Item>
+							<ToggleGroup.Root
+								type="single"
+								bind:value={diminishedMode}
+								class="flex flex-wrap gap-2"
+							>
+								<ToggleGroup.Item value="whole-half" class="px-3 text-xs"
+									>Whole-Half</ToggleGroup.Item
+								>
+								<ToggleGroup.Item value="half-whole" class="px-3 text-xs"
+									>Half-Whole</ToggleGroup.Item
+								>
 							</ToggleGroup.Root>
 						</div>
 					{/if}
 				</div>
 			{/if}
-			<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+			<div
+				class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+			>
 				<span class="text-xs text-muted-foreground">Drone</span>
 				<Switch bind:checked={droneOn} />
 			</div>
@@ -348,7 +425,11 @@
 				<div class="h-full rounded-full bg-primary/70" style={`width: ${progressPercent}%`}></div>
 			</div>
 			<div class="text-xs text-muted-foreground">
-				{stage === 'playing' ? `Current note: ${currentLabel}` : stage === 'idle' ? 'Stopped' : stage}
+				{stage === 'playing'
+					? `Current note: ${currentLabel}`
+					: stage === 'idle'
+						? 'Stopped'
+						: stage}
 			</div>
 		</Card.Content>
 	</Card.Root>
