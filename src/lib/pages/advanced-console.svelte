@@ -4,7 +4,8 @@
 		RhythmEngine,
 		type RhythmEngineConfig,
 		type RhythmStage,
-		type RhythmTick
+		type RhythmTick,
+		type DropoutConfig
 	} from '$lib/rhythm/engine';
 	import { HarmonyEngine, type ChordQuality, type SeventhType, type TriadType } from '$lib/harmony/engine';
 	import {
@@ -303,12 +304,21 @@ const floorSyllables: Record<number, string[]> = {
 	let melodyAllowedDegrees = $state<string[]>([...DIATONIC_MAJOR]);
 	let rhythmAudioReady = $state(false);
 	let harmonyAudioReady = $state(false);
+	let dropoutEnabled = $state(false);
+	let dropoutBarsOn = $state(2);
+	let dropoutBarsSilent = $state(2);
+	let dropoutDropPulse = $state(true);
+	let dropoutDropSubdivision = $state(true);
+	let dropoutPhase = $state<'on' | 'silent' | 'off'>('off');
+	let dropoutBarsRemaining = $state(0);
 
 	const engine = new RhythmEngine({
 		onTick: (tick: RhythmTick) => {
 			currentStep = tick.step;
 			currentIsGroupStart = tick.isGroupStart;
 			stage = tick.stage;
+			dropoutPhase = tick.dropoutPhase;
+			dropoutBarsRemaining = tick.dropoutBarsRemaining;
 			if (autoAdvanceFloors && floorsMode && tick.stage === 'playing' && tick.step === 0) {
 				barsRemainingInFloor = Math.max(0, barsRemainingInFloor - 1);
 				if (barsRemainingInFloor === 0) {
@@ -484,7 +494,14 @@ const floorSyllables: Record<number, string[]> = {
 			groupingLevel: floorsMode ? 0 : effectiveMix.grouping,
 			mode: floorsMode ? 'floors' : 'standard',
 			floorSteps: floorsMode ? floorDenomNum : undefined,
-			layerSteps: floorsMode ? layerCountNum : undefined
+			layerSteps: floorsMode ? layerCountNum : undefined,
+			dropout: {
+				enabled: dropoutEnabled,
+				barsOn: dropoutBarsOn,
+				barsSilent: dropoutBarsSilent,
+				dropPulse: dropoutDropPulse,
+				dropSubdivision: dropoutDropSubdivision
+			} satisfies DropoutConfig
 		} as Partial<RhythmEngineConfig>);
 		engine.start();
 		isPlaying = true;
@@ -699,7 +716,7 @@ const floorSyllables: Record<number, string[]> = {
 	);
 	const playheadLeft = $derived(`${(currentStep / Math.max(engineSteps, 1)) * 100}%`);
 	const configKey = $derived(
-		`${bpmValue}-${matchPlaybackBpm}-${meter}-${patternId}-${groupingId}-${countIn}-${pulseMix}-${subdivisionMix}-${groupAccentMode}-${learnMode}-${learnStep}-${floorsMode}-${floorDenom}-${layerCount}-${autoAdvanceFloors}-${barsPerFloor}`
+		`${bpmValue}-${matchPlaybackBpm}-${meter}-${patternId}-${groupingId}-${countIn}-${pulseMix}-${subdivisionMix}-${groupAccentMode}-${learnMode}-${learnStep}-${floorsMode}-${floorDenom}-${layerCount}-${autoAdvanceFloors}-${barsPerFloor}-${dropoutEnabled}-${dropoutBarsOn}-${dropoutBarsSilent}-${dropoutDropPulse}-${dropoutDropSubdivision}`
 	);
 	const gridLabel = $derived(
 		floorsMode
@@ -1367,6 +1384,11 @@ const floorSyllables: Record<number, string[]> = {
 					if (typeof saved.autoAdvanceFloors === 'boolean')
 						autoAdvanceFloors = saved.autoAdvanceFloors;
 					if (typeof saved.barsPerFloor === 'number') barsPerFloor = saved.barsPerFloor;
+					if (typeof (saved as any).dropoutEnabled === 'boolean') dropoutEnabled = (saved as any).dropoutEnabled;
+					if (typeof (saved as any).dropoutBarsOn === 'number') dropoutBarsOn = (saved as any).dropoutBarsOn;
+					if (typeof (saved as any).dropoutBarsSilent === 'number') dropoutBarsSilent = (saved as any).dropoutBarsSilent;
+					if (typeof (saved as any).dropoutDropPulse === 'boolean') dropoutDropPulse = (saved as any).dropoutDropPulse;
+					if (typeof (saved as any).dropoutDropSubdivision === 'boolean') dropoutDropSubdivision = (saved as any).dropoutDropSubdivision;
 					if (typeof saved.harmonyKey === 'string') harmonyKey = saved.harmonyKey;
 					if (typeof saved.harmonyChordRoot === 'string') {
 						harmonyChordRoot = saved.harmonyChordRoot;
@@ -1459,6 +1481,11 @@ const floorSyllables: Record<number, string[]> = {
 					layerCount,
 					autoAdvanceFloors,
 					barsPerFloor,
+					dropoutEnabled,
+					dropoutBarsOn,
+					dropoutBarsSilent,
+					dropoutDropPulse,
+					dropoutDropSubdivision,
 				harmonyKey,
 				harmonyChordRoot,
 				harmonyFunctionKey,
@@ -2052,6 +2079,49 @@ const floorSyllables: Record<number, string[]> = {
 										<ToggleGroup.Item value="strong" class="px-3 text-xs">Strong</ToggleGroup.Item>
 									</ToggleGroup.Root>
 								</div>
+							</Card.Content>
+						</Card.Root>
+						<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
+							<Card.Header>
+								<Card.Title class="font-display text-lg">Dropout</Card.Title>
+								<Card.Description>Hold the pulse internally during silent bars.</Card.Description>
+							</Card.Header>
+							<Card.Content class="space-y-4">
+								<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+									<span class="text-xs text-muted-foreground">Enable dropout</span>
+									<Switch bind:checked={dropoutEnabled} />
+								</div>
+								{#if dropoutEnabled}
+									<div class="space-y-2">
+										<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+											<span>Bars on</span>
+											<span class="text-foreground">{dropoutBarsOn}</span>
+										</div>
+										<Slider type="single" min={1} max={16} step={1} bind:value={dropoutBarsOn} />
+									</div>
+									<div class="space-y-2">
+										<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+											<span>Bars silent</span>
+											<span class="text-foreground">{dropoutBarsSilent}</span>
+										</div>
+										<Slider type="single" min={1} max={16} step={1} bind:value={dropoutBarsSilent} />
+									</div>
+									<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+										<span class="text-xs text-muted-foreground">Drop pulse</span>
+										<Switch bind:checked={dropoutDropPulse} />
+									</div>
+									<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+										<span class="text-xs text-muted-foreground">Drop subdivisions</span>
+										<Switch bind:checked={dropoutDropSubdivision} />
+									</div>
+									{#if stage === 'playing'}
+										<div class={`rounded-lg border px-3 py-2 text-xs ${dropoutPhase === 'silent' ? 'border-rose-400/30 bg-rose-500/10 text-rose-300' : 'border-border/60 text-muted-foreground'}`}>
+											{dropoutPhase === 'silent'
+												? `Silent — hold it. ${dropoutBarsRemaining} bar${dropoutBarsRemaining === 1 ? '' : 's'} to return`
+												: `Playing — ${dropoutBarsRemaining} bar${dropoutBarsRemaining === 1 ? '' : 's'} until dropout`}
+										</div>
+									{/if}
+								{/if}
 							</Card.Content>
 						</Card.Root>
 					{/if}

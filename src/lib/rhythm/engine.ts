@@ -1,10 +1,20 @@
 export type RhythmStage = 'idle' | 'count-in' | 'playing';
 
+export type DropoutConfig = {
+	enabled: boolean;
+	barsOn: number;
+	barsSilent: number;
+	dropPulse: boolean;
+	dropSubdivision: boolean;
+};
+
 export type RhythmTick = {
 	step: number;
 	isGroupStart: boolean;
 	stage: RhythmStage;
 	totalSteps: number;
+	dropoutPhase: 'on' | 'silent' | 'off';
+	dropoutBarsRemaining: number;
 };
 
 export type RhythmEngineConfig = {
@@ -19,6 +29,7 @@ export type RhythmEngineConfig = {
 	mode?: 'standard' | 'floors';
 	floorSteps?: number;
 	layerSteps?: number;
+	dropout?: DropoutConfig;
 };
 
 type RhythmEngineCallbacks = {
@@ -34,7 +45,14 @@ const DEFAULT_CONFIG: RhythmEngineConfig = {
 	countInBars: 1,
 	pulseLevel: 0.6,
 	subdivisionLevel: 0.4,
-	groupingLevel: 0.6
+	groupingLevel: 0.6,
+	dropout: {
+		enabled: false,
+		barsOn: 2,
+		barsSilent: 2,
+		dropPulse: true,
+		dropSubdivision: true
+	}
 };
 
 const clamp = (value: number, min: number, max: number) =>
@@ -91,6 +109,8 @@ export class RhythmEngine {
 	private nextNoteTime = 0;
 	private nextBeatNumber = 0;
 	private lastUiBeat = -1;
+	private dropoutBarCount = 0;
+	private dropoutPhase: 'on' | 'silent' = 'on';
 
 	constructor(callbacks: RhythmEngineCallbacks = {}) {
 		this.callbacks = callbacks;
@@ -104,7 +124,11 @@ export class RhythmEngine {
 			countInBars: clamp(next.countInBars ?? this.config.countInBars, 0, 4),
 			pulseLevel: clamp(next.pulseLevel ?? this.config.pulseLevel, 0, 1),
 			subdivisionLevel: clamp(next.subdivisionLevel ?? this.config.subdivisionLevel, 0, 1),
-			groupingLevel: clamp(next.groupingLevel ?? this.config.groupingLevel, 0, 1)
+			groupingLevel: clamp(next.groupingLevel ?? this.config.groupingLevel, 0, 1),
+			dropout:
+				next.dropout !== undefined
+					? { ...this.config.dropout, ...next.dropout }
+					: this.config.dropout
 		};
 	}
 
@@ -135,6 +159,8 @@ export class RhythmEngine {
 		this.nextNoteTime = this.startTime;
 		this.nextBeatNumber = 0;
 		this.lastUiBeat = -1;
+		this.dropoutBarCount = 0;
+		this.dropoutPhase = 'on';
 
 		this.schedulerTimer = setInterval(() => this.scheduleNotes(), 25);
 		this.scheduleNotes();
@@ -155,6 +181,8 @@ export class RhythmEngine {
 		this.callbacks.onStageChange?.(this.stage);
 		this.nextBeatNumber = 0;
 		this.lastUiBeat = -1;
+		this.dropoutBarCount = 0;
+		this.dropoutPhase = 'on';
 	}
 
 	private scheduleNotes() {
@@ -215,26 +243,43 @@ export class RhythmEngine {
 			return;
 		}
 
+		const { dropout } = this.config;
+		if (dropout?.enabled && isBarStart) {
+			this.dropoutBarCount += 1;
+			if (this.dropoutPhase === 'on' && this.dropoutBarCount > dropout.barsOn) {
+				this.dropoutPhase = 'silent';
+				this.dropoutBarCount = 1;
+			} else if (this.dropoutPhase === 'silent' && this.dropoutBarCount > dropout.barsSilent) {
+				this.dropoutPhase = 'on';
+				this.dropoutBarCount = 1;
+			}
+		}
+
+		const inSilent = dropout?.enabled && this.dropoutPhase === 'silent';
+		const effectivePulse = inSilent && dropout.dropPulse ? 0 : pulseLevel;
+		const effectiveSub = inSilent && dropout.dropSubdivision ? 0 : subdivisionLevel;
+		const effectiveGroup = inSilent && dropout.dropSubdivision ? 0 : groupingLevel;
+
 		if (mode === 'floors' && floorStride && layerStride) {
 			const isFloorStep = step % floorStride === 0;
 			const isLayerStep = step % layerStride === 0;
-			if (subdivisionLevel > 0 && isLayerStep) {
-				playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle', time);
+			if (effectiveSub > 0 && isLayerStep) {
+				playTone(this.ctx, 900, 0.05, 0.25 * effectiveSub, 'triangle', time);
 			}
-			if (pulseLevel > 0 && isFloorStep) {
-				playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine', time);
+			if (effectivePulse > 0 && isFloorStep) {
+				playTone(this.ctx, 180, 0.08, 0.6 * effectivePulse, 'sine', time);
 			}
 			return;
 		}
 
-		if (subdivisionLevel > 0) {
-			playTone(this.ctx, 900, 0.05, 0.25 * subdivisionLevel, 'triangle', time);
+		if (effectiveSub > 0) {
+			playTone(this.ctx, 900, 0.05, 0.25 * effectiveSub, 'triangle', time);
 		}
-		if (groupingLevel > 0 && isGroupStart) {
-			playTone(this.ctx, 1200, 0.04, 0.35 * groupingLevel, 'square', time);
+		if (effectiveGroup > 0 && isGroupStart) {
+			playTone(this.ctx, 1200, 0.04, 0.35 * effectiveGroup, 'square', time);
 		}
-		if (pulseLevel > 0 && isBarStart) {
-			playTone(this.ctx, 180, 0.08, 0.6 * pulseLevel, 'sine', time);
+		if (effectivePulse > 0 && isBarStart) {
+			playTone(this.ctx, 180, 0.08, 0.6 * effectivePulse, 'sine', time);
 		}
 	}
 
@@ -263,11 +308,22 @@ export class RhythmEngine {
 				this.stage = tickStage;
 				this.callbacks.onStageChange?.(tickStage);
 			}
+			const dropout = this.config.dropout;
+			const dropoutPhase: 'on' | 'silent' | 'off' = !dropout?.enabled
+				? 'off'
+				: this.dropoutPhase;
+			const dropoutBarsTotal =
+				this.dropoutPhase === 'on' ? (dropout?.barsOn ?? 2) : (dropout?.barsSilent ?? 2);
+			const dropoutBarsRemaining = dropout?.enabled
+				? Math.max(1, dropoutBarsTotal - this.dropoutBarCount + 1)
+				: 0;
 			this.callbacks.onTick?.({
 				step,
 				isGroupStart: groupStarts.has(step),
 				stage: tickStage,
-				totalSteps
+				totalSteps,
+				dropoutPhase,
+				dropoutBarsRemaining
 			});
 		}
 		this.rafId = requestAnimationFrame(() => this.updateUi());
