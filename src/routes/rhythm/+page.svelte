@@ -46,6 +46,11 @@
 	let dropoutDropSubdivision = $state(true);
 	let dropoutPhase = $state<'on' | 'silent' | 'off'>('off');
 	let dropoutBarsRemaining = $state(0);
+	let swing = $state(0);
+
+	const swingLabel = $derived(
+		swing === 0 ? 'Straight' : swing <= 20 ? 'Light' : swing <= 50 ? 'Triplet' : 'Hard shuffle'
+	);
 
 	const subdivisionCount = $derived(Number(subdivision));
 	const totalSteps = $derived(subdivisionCount * 4);
@@ -92,7 +97,8 @@
 				barsSilent: dropoutBarsSilent,
 				dropPulse: dropoutDropPulse,
 				dropSubdivision: dropoutDropSubdivision
-			} satisfies DropoutConfig
+			} satisfies DropoutConfig,
+			swing
 		} as Partial<RhythmEngineConfig>);
 	};
 
@@ -144,7 +150,7 @@
 		}, 450);
 	};
 
-	const configKey = $derived(`${bpmValue}-${countIn}-${subdivision}-${contextPulse}-${dropoutEnabled}-${dropoutBarsOn}-${dropoutBarsSilent}-${dropoutDropPulse}-${dropoutDropSubdivision}`);
+	const configKey = $derived(`${bpmValue}-${countIn}-${subdivision}-${contextPulse}-${dropoutEnabled}-${dropoutBarsOn}-${dropoutBarsSilent}-${dropoutDropPulse}-${dropoutDropSubdivision}-${swing}`);
 	$effect(() => {
 		if (isPlaying && configKey !== lastConfigKey) {
 			stopPlayback();
@@ -336,6 +342,19 @@
 						<span class="text-xs text-muted-foreground">Count-in</span>
 						<Switch bind:checked={countIn} />
 					</div>
+				</div>
+				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Feel</div>
+					<div class="mt-2 flex items-center justify-between text-xs text-muted-foreground">
+						<span>Swing</span>
+						<span class="text-foreground">{swingLabel}{swing > 0 ? ` (${swing}%)` : ''}</span>
+					</div>
+					<Slider type="single" min={0} max={80} step={5} bind:value={swing} />
+					{#if subdivisionCount % 2 !== 0}
+						<div class="mt-1 text-xs text-muted-foreground/60">
+							Swing applies to even subdivisions only.
+						</div>
+					{/if}
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3 md:col-span-3">
 					<div class="flex items-center justify-between">
