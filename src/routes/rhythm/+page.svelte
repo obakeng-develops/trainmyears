@@ -6,6 +6,7 @@
 		type RhythmStage,
 		type RhythmTick
 	} from '$lib/rhythm/engine';
+	import type { DropoutConfig } from '$lib/rhythm/engine';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Slider } from '$lib/components/ui/slider/index.js';
@@ -38,6 +39,13 @@
 	let trainerTimer: ReturnType<typeof setTimeout> | null = null;
 	let audioReady = $state(false);
 	let lastConfigKey = $state('');
+	let dropoutEnabled = $state(false);
+	let dropoutBarsOn = $state(2);
+	let dropoutBarsSilent = $state(2);
+	let dropoutDropPulse = $state(true);
+	let dropoutDropSubdivision = $state(true);
+	let dropoutPhase = $state<'on' | 'silent' | 'off'>('off');
+	let dropoutBarsRemaining = $state(0);
 
 	const subdivisionCount = $derived(Number(subdivision));
 	const totalSteps = $derived(subdivisionCount * 4);
@@ -50,6 +58,8 @@
 		onTick: (tick: RhythmTick) => {
 			currentStep = tick.step;
 			stage = tick.stage;
+			dropoutPhase = tick.dropoutPhase;
+			dropoutBarsRemaining = tick.dropoutBarsRemaining;
 		},
 		onStageChange: (nextStage) => {
 			stage = nextStage;
@@ -75,7 +85,14 @@
 			countInBars: 1,
 			pulseLevel: contextPulse ? 0.25 : 0,
 			subdivisionLevel: 0.8,
-			groupingLevel: contextPulse ? 0.55 : 0
+			groupingLevel: contextPulse ? 0.55 : 0,
+			dropout: {
+				enabled: dropoutEnabled,
+				barsOn: dropoutBarsOn,
+				barsSilent: dropoutBarsSilent,
+				dropPulse: dropoutDropPulse,
+				dropSubdivision: dropoutDropSubdivision
+			} satisfies DropoutConfig
 		} as Partial<RhythmEngineConfig>);
 	};
 
@@ -127,7 +144,7 @@
 		}, 450);
 	};
 
-	const configKey = $derived(`${bpmValue}-${countIn}-${subdivision}-${contextPulse}`);
+	const configKey = $derived(`${bpmValue}-${countIn}-${subdivision}-${contextPulse}-${dropoutEnabled}-${dropoutBarsOn}-${dropoutBarsSilent}-${dropoutDropPulse}-${dropoutDropSubdivision}`);
 	$effect(() => {
 		if (isPlaying && configKey !== lastConfigKey) {
 			stopPlayback();
@@ -251,6 +268,13 @@
 				<div class="h-2 w-full rounded-full bg-border/60">
 					<div class="h-full rounded-full bg-primary/70 transition-all" style={`width: ${progressPercent}%;`}></div>
 				</div>
+				{#if dropoutEnabled && stage === 'playing'}
+					<div class={`rounded-lg border px-3 py-2 text-xs ${dropoutPhase === 'silent' ? 'border-rose-400/30 bg-rose-500/10 text-rose-300' : 'border-border/60 text-muted-foreground'}`}>
+						{dropoutPhase === 'silent'
+							? `Silent — hold it. ${dropoutBarsRemaining} bar${dropoutBarsRemaining === 1 ? '' : 's'} to return`
+							: `Playing — ${dropoutBarsRemaining} bar${dropoutBarsRemaining === 1 ? '' : 's'} until dropout`}
+					</div>
+				{/if}
 				<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
 					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
 					<div class="mt-2 text-sm">
@@ -276,7 +300,7 @@
 		<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
 			<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
 				Settings
-				<span class="text-xs text-muted-foreground">Subdivision · Context · Tempo</span>
+				<span class="text-xs text-muted-foreground">Subdivision · Context · Tempo · Dropout</span>
 			</summary>
 			<div class="mt-4 grid gap-4 md:grid-cols-3">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
@@ -312,6 +336,40 @@
 						<span class="text-xs text-muted-foreground">Count-in</span>
 						<Switch bind:checked={countIn} />
 					</div>
+				</div>
+				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3 md:col-span-3">
+					<div class="flex items-center justify-between">
+						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dropout</div>
+						<Switch bind:checked={dropoutEnabled} />
+					</div>
+					{#if dropoutEnabled}
+						<div class="mt-3 grid gap-3 sm:grid-cols-2">
+							<div>
+								<div class="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+									<span>Bars on</span>
+									<span class="text-foreground">{dropoutBarsOn}</span>
+								</div>
+								<Slider type="single" min={1} max={16} step={1} bind:value={dropoutBarsOn} />
+							</div>
+							<div>
+								<div class="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+									<span>Bars silent</span>
+									<span class="text-foreground">{dropoutBarsSilent}</span>
+								</div>
+								<Slider type="single" min={1} max={16} step={1} bind:value={dropoutBarsSilent} />
+							</div>
+						</div>
+						<div class="mt-3 flex flex-wrap gap-2">
+							<div class="flex flex-1 items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+								<span class="text-xs text-muted-foreground">Drop pulse</span>
+								<Switch bind:checked={dropoutDropPulse} />
+							</div>
+							<div class="flex flex-1 items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+								<span class="text-xs text-muted-foreground">Drop subdivisions</span>
+								<Switch bind:checked={dropoutDropSubdivision} />
+							</div>
+						</div>
+					{/if}
 				</div>
 			</div>
 		</details>
