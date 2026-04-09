@@ -240,6 +240,7 @@
 	};
 
 	const ensureProgressionLength = () => {
+		if (progression.length === progressionLength) return;
 		const next = [...progression];
 		while (next.length < progressionLength) {
 			next.push({ rootPc: 0, quality: 'major' });
@@ -456,12 +457,37 @@
 				</div>
 			</Card.Header>
 		<Card.Content class="space-y-6" onpointerenter={triggerPreload} onpointerdown={triggerPreload}>
-				<div class="flex flex-wrap items-center gap-2">
-					<ToggleGroup.Root type="single" bind:value={mode} class="flex gap-2">
-						<ToggleGroup.Item value="listen" class="px-3 text-xs">Listen</ToggleGroup.Item>
-						<ToggleGroup.Item value="build" class="px-3 text-xs">Build</ToggleGroup.Item>
-						<ToggleGroup.Item value="trainer" class="px-3 text-xs">Trainer</ToggleGroup.Item>
-					</ToggleGroup.Root>
+				<div class="flex gap-1 rounded-xl border border-border/60 bg-[var(--surface-2)] p-1">
+					<button
+						class={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+							mode === 'listen'
+								? 'bg-background text-foreground shadow-sm'
+								: 'text-muted-foreground hover:text-foreground'
+						}`}
+						onclick={() => (mode = 'listen')}
+					>
+						Listen
+					</button>
+					<button
+						class={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+							mode === 'build'
+								? 'bg-background text-foreground shadow-sm'
+								: 'text-muted-foreground hover:text-foreground'
+						}`}
+						onclick={() => (mode = 'build')}
+					>
+						Build
+					</button>
+					<button
+						class={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+							mode === 'trainer'
+								? 'bg-background text-foreground shadow-sm'
+								: 'text-muted-foreground hover:text-foreground'
+						}`}
+						onclick={() => (mode = 'trainer')}
+					>
+						Trainer
+					</button>
 				</div>
 
 				<div
