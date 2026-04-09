@@ -132,7 +132,7 @@
 		11: 'VII'
 	};
 
-	let mode = $state<'listen' | 'build'>('listen');
+	let mode = $state<'listen' | 'build' | 'trainer'>('listen');
 	let tonic = $state('0');
 	let bpm = $state(96);
 	let barsPerChord = $state(1);
@@ -151,6 +151,11 @@
 	let samplerLoading = $state(false);
 	let samplerPreloadTriggered = $state(false);
 
+	// --- Trainer state ---
+	let trainerTarget = $state(-1);
+	let trainerFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
+	let trainerScore = $state({ correct: 0, total: 0 });
+
 	let progression = $state<Array<{ rootPc: number; quality: ChordQuality }>>([
 		{ rootPc: 0, quality: 'major' },
 		{ rootPc: 7, quality: 'major' },
@@ -164,12 +169,12 @@
 	const preset = $derived(presetProgressions.find((item) => item.id === presetId) ?? presetProgressions[0]);
 	const barMs = $derived((60_000 / bpm) * 4 * barsPerChord);
 	const progressionChords = $derived(
-		mode === 'listen'
-			? preset.chords.map((entry) => ({
+		mode === 'build'
+			? progression
+			: preset.chords.map((entry) => ({
 					rootPc: (Number(tonic) + entry.degree) % 12,
 					quality: entry.quality as ChordQuality
 				}))
-			: progression
 	);
 	const timelineKey = $derived(`${mode}-${presetId}-${progressionLength}`);
 
@@ -186,6 +191,52 @@
 		const diatonicIndex = diatonicMajorOffsets.indexOf(offset);
 		if (diatonicIndex !== -1) return diatonicMajorLabels[diatonicIndex];
 		return showChromatic ? chromaticLabels[offset] ?? '' : '';
+	};
+
+	// Trainer: build choice list from diatonic labels + any chromatic functions in the preset
+	const trainerChoices = $derived.by(() => {
+		const labels = new Set<string>(diatonicMajorLabels);
+		for (const chord of progressionChords) {
+			const label = functionLabel(chord.rootPc);
+			if (label) labels.add(label);
+		}
+		const order = ['I', 'bII', 'ii', 'bIII', 'iii', 'IV', 'bV', 'V', 'bVI', 'vi', 'bVII', 'vii°'];
+		return [...labels].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+	});
+
+	const trainerCorrectLabel = $derived(
+		trainerTarget >= 0 && trainerTarget < progressionChords.length
+			? functionLabel(progressionChords[trainerTarget].rootPc)
+			: ''
+	);
+
+	const nextTrainerRound = () => {
+		// Pick a random preset different from current
+		let nextPreset = presetProgressions[Math.floor(Math.random() * presetProgressions.length)];
+		if (presetProgressions.length > 1) {
+			let safety = 0;
+			while (nextPreset.id === presetId && safety < 6) {
+				nextPreset = presetProgressions[Math.floor(Math.random() * presetProgressions.length)];
+				safety += 1;
+			}
+		}
+		presetId = nextPreset.id;
+		trainerTarget = Math.floor(Math.random() * nextPreset.chords.length);
+		trainerFeedback = 'idle';
+	};
+
+	const submitTrainerAnswer = (label: string) => {
+		if (trainerFeedback !== 'idle') return;
+		trainerScore = {
+			correct: trainerScore.correct + (label === trainerCorrectLabel ? 1 : 0),
+			total: trainerScore.total + 1
+		};
+		trainerFeedback = label === trainerCorrectLabel ? 'correct' : 'incorrect';
+	};
+
+	const startTrainer = async () => {
+		nextTrainerRound();
+		if (!isPlaying) await startPlayback();
 	};
 
 	const ensureProgressionLength = () => {
@@ -281,9 +332,16 @@
 	});
 
 	$effect(() => {
-		if (mode !== 'listen') return;
+		if (mode === 'build') return;
 		void presetId;
 		currentIndex = 0;
+	});
+
+	$effect(() => {
+		void mode;
+		trainerTarget = -1;
+		trainerFeedback = 'idle';
+		trainerScore = { correct: 0, total: 0 };
 	});
 
 	$effect(() => {
@@ -315,7 +373,7 @@
 		}
 		try {
 			const saved = JSON.parse(raw) as Partial<{
-				mode: 'listen' | 'build';
+				mode: 'listen' | 'build' | 'trainer';
 				tonic: string;
 				bpm: number;
 				barsPerChord: number;
@@ -402,6 +460,7 @@
 					<ToggleGroup.Root type="single" bind:value={mode} class="flex gap-2">
 						<ToggleGroup.Item value="listen" class="px-3 text-xs">Listen</ToggleGroup.Item>
 						<ToggleGroup.Item value="build" class="px-3 text-xs">Build</ToggleGroup.Item>
+						<ToggleGroup.Item value="trainer" class="px-3 text-xs">Trainer</ToggleGroup.Item>
 					</ToggleGroup.Root>
 				</div>
 
@@ -410,26 +469,91 @@
 					style={`grid-template-columns: repeat(${progressionChords.length}, minmax(0, 1fr));`}
 				>
 					{#each progressionChords as chord, index (timelineKey + '-' + index)}
+						{@const isTarget = mode === 'trainer' && index === trainerTarget}
+						{@const isNowPlaying = index === currentIndex && isPlaying}
 						<div
-							class={`rounded-xl border border-border/60 px-3 py-3 text-xs font-semibold uppercase tracking-wide ${
-								index === currentIndex && isPlaying
-									? 'bg-[var(--surface-2)] text-foreground shadow-[0_0_18px_rgba(186,120,52,0.35)]'
-									: 'bg-transparent text-muted-foreground'
+							class={`rounded-xl border px-3 py-3 text-xs font-semibold uppercase tracking-wide transition-colors ${
+								isTarget && isNowPlaying
+									? 'border-amber-500/50 bg-amber-500/10 text-foreground shadow-[0_0_18px_rgba(186,120,52,0.45)]'
+									: isTarget
+										? 'border-amber-500/30 bg-amber-500/5 text-foreground'
+										: isNowPlaying
+											? 'border-border/60 bg-[var(--surface-2)] text-foreground shadow-[0_0_18px_rgba(186,120,52,0.35)]'
+											: 'border-border/60 bg-transparent text-muted-foreground'
 							}`}
 						>
-							<div class="text-sm font-semibold normal-case text-foreground">
-								{chordLabel(chord.rootPc, chord.quality)}
-							</div>
-							<div class="text-xs text-muted-foreground">{functionLabel(chord.rootPc)}</div>
+							{#if mode === 'trainer'}
+								<div class="text-sm font-semibold normal-case text-foreground">
+									Chord {index + 1}
+								</div>
+								<div class="text-xs text-muted-foreground">
+									{isTarget ? '?' : ''}
+								</div>
+							{:else}
+								<div class="text-sm font-semibold normal-case text-foreground">
+									{chordLabel(chord.rootPc, chord.quality)}
+								</div>
+								<div class="text-xs text-muted-foreground">{functionLabel(chord.rootPc)}</div>
+							{/if}
 						</div>
 					{/each}
 				</div>
-				<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
-					<div class="mt-2 text-sm">
-						Notice the pull and release against the drone as the loop turns over.
+				{#if mode === 'trainer'}
+					<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+						{#if trainerTarget < 0}
+							<div class="text-center">
+								<div class="text-sm text-muted-foreground">
+									Hear a progression loop, then identify the function of the highlighted chord.
+								</div>
+								<Button class="mt-4" onclick={() => void startTrainer()}>Start trainer</Button>
+							</div>
+						{:else}
+							<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+								What function is chord {trainerTarget + 1}?
+							</div>
+							<div class="mt-4 flex flex-wrap gap-2">
+								{#each trainerChoices as label}
+									<Button
+										variant="secondary"
+										size="sm"
+										disabled={trainerFeedback !== 'idle'}
+										onclick={() => submitTrainerAnswer(label)}
+									>
+										{label}
+									</Button>
+								{/each}
+							</div>
+							{#if trainerFeedback !== 'idle'}
+								<div
+									class={`mt-4 rounded-lg border border-border/60 px-3 py-2 text-sm ring-1 ${
+										trainerFeedback === 'correct'
+											? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
+											: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
+									}`}
+								>
+									{trainerFeedback === 'correct'
+										? 'Correct!'
+										: `Not quite — it was ${trainerCorrectLabel}.`}
+								</div>
+								<Button class="mt-3" variant="secondary" size="sm" onclick={nextTrainerRound}>
+									Next
+								</Button>
+							{/if}
+							{#if trainerScore.total > 0}
+								<div class="mt-3 text-xs text-muted-foreground">
+									{trainerScore.correct}/{trainerScore.total} correct
+								</div>
+							{/if}
+						{/if}
 					</div>
-				</div>
+				{:else}
+					<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
+						<div class="mt-2 text-sm">
+							Notice the pull and release against the drone as the loop turns over.
+						</div>
+					</div>
+				{/if}
 			</Card.Content>
 		</Card.Root>
 
@@ -488,16 +612,18 @@
 				<Card.Root class="border/60 bg-card/80 shadow-none backdrop-blur lg:shadow-lg">
 					<Card.Header>
 						<Card.Title class="font-display text-lg">
-							{mode === 'listen' ? 'Listen presets' : 'Build a progression'}
+							{mode === 'build' ? 'Build a progression' : mode === 'trainer' ? 'Trainer presets' : 'Listen presets'}
 						</Card.Title>
 						<Card.Description>
-							{mode === 'listen'
-								? 'Choose a progression and loop it against the drone.'
-								: 'Add chords (including chromatics) and loop them.'}
+							{mode === 'build'
+								? 'Add chords (including chromatics) and loop them.'
+								: mode === 'trainer'
+									? 'Pick a progression to train with, or let it randomize.'
+									: 'Choose a progression and loop it against the drone.'}
 						</Card.Description>
 					</Card.Header>
 					<Card.Content class="space-y-4">
-						{#if mode === 'listen'}
+						{#if mode === 'listen' || mode === 'trainer'}
 							<div class="space-y-2">
 								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Progression</div>
 								<ToggleGroup.Root type="single" bind:value={presetId} class="flex flex-wrap gap-2">
