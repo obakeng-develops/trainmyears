@@ -43,6 +43,8 @@ export type MelodyTick = {
 	phraseLength: number;
 };
 
+export type MelodyContour = 'arch' | 'descent' | 'neighbor' | 'random';
+
 export type MelodyEngineConfig = {
 	bpm: number;
 	keyPc: number;
@@ -56,6 +58,7 @@ export type MelodyEngineConfig = {
 	regenerateOnLoop: boolean;
 	allowedDegrees: string[];
 	startOnTonic: boolean;
+	contour: MelodyContour;
 };
 
 export type MelodyPhraseNote = {
@@ -82,7 +85,17 @@ const DEFAULT_CONFIG: MelodyEngineConfig = {
 	rangeOctaves: 1,
 	regenerateOnLoop: true,
 	allowedDegrees: ['1', '2', '3', '4', '5', '6', '7'],
-	startOnTonic: true
+	startOnTonic: true,
+	contour: 'arch'
+};
+
+// Direction bias per position (normalized 0–1 through the phrase).
+// Positive = ascending, negative = descending, 0 = neutral.
+const CONTOUR_SHAPES: Record<MelodyContour, (pos: number) => number> = {
+	arch: (pos) => (pos < 0.5 ? 1 : -1),
+	descent: () => -1,
+	neighbor: (pos) => (pos < 0.33 ? 1 : pos < 0.66 ? -1 : 1),
+	random: () => 0
 };
 
 const FULL_DEGREES = [
@@ -327,9 +340,10 @@ export class MelodyEngine {
 	}
 
 	generatePhrase() {
-		const { phraseLength, maxLeap, mode, startOnTonic } = this.config;
+		const { phraseLength, maxLeap, mode, startOnTonic, contour } = this.config;
 		const allowedDegrees = this.getAllowedDegrees(mode);
 		if (!allowedDegrees.length) return this.phrase;
+		const shape = CONTOUR_SHAPES[contour] ?? CONTOUR_SHAPES.random;
 		const phrase: MelodyPhraseNote[] = [];
 		let lastDegree =
 			startOnTonic && allowedDegrees.includes('1')
@@ -338,8 +352,19 @@ export class MelodyEngine {
 		let lastBase = this.degreeBase(lastDegree);
 		let lastMidi: number | null = null;
 		for (let i = 0; i < phraseLength; i += 1) {
-			const degree =
-				i === 0 ? lastDegree : this.pickNextDegree(allowedDegrees, lastBase, maxLeap, lastDegree);
+			let degree: string;
+			if (i === 0) {
+				degree = lastDegree;
+			} else if (i === phraseLength - 1 && allowedDegrees.includes('1')) {
+				// Resolve to tonic on last note with high probability
+				degree = Math.random() < 0.7
+					? '1'
+					: this.pickNextDegree(allowedDegrees, lastBase, maxLeap, lastDegree, 0);
+			} else {
+				const pos = phraseLength > 2 ? i / (phraseLength - 1) : 0.5;
+				const bias = shape(pos);
+				degree = this.pickNextDegree(allowedDegrees, lastBase, maxLeap, lastDegree, bias);
+			}
 			const midi = this.degreeToMidi(degree, lastMidi ?? undefined);
 			phrase.push({ degree, midi });
 			lastDegree = degree;
@@ -496,12 +521,29 @@ export class MelodyEngine {
 		this.rafId = requestAnimationFrame(() => this.updateUi());
 	}
 
-	private pickNextDegree(allowed: string[], lastBase: number, maxLeap: number, fallback: string) {
+	private pickNextDegree(
+		allowed: string[],
+		lastBase: number,
+		maxLeap: number,
+		fallback: string,
+		bias: number = 0
+	) {
 		const candidates = allowed.filter((degree) => {
 			const base = this.degreeBase(degree);
 			return Math.abs(base - lastBase) <= maxLeap;
 		});
-		return candidates[Math.floor(Math.random() * candidates.length)] ?? fallback;
+		if (!candidates.length) return fallback;
+		if (bias === 0) {
+			return candidates[Math.floor(Math.random() * candidates.length)] ?? fallback;
+		}
+		// Weight candidates in the biased direction (~70/30 split)
+		const weighted = candidates.flatMap((degree) => {
+			const base = this.degreeBase(degree);
+			const diff = base - lastBase;
+			const aligned = bias > 0 ? diff > 0 : diff < 0;
+			return Array.from({ length: aligned ? 3 : 1 }, () => degree);
+		});
+		return weighted[Math.floor(Math.random() * weighted.length)] ?? fallback;
 	}
 
 	private pickStartDegree(allowed: string[], startOnTonic: boolean) {
