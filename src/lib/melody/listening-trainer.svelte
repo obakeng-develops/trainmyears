@@ -81,6 +81,8 @@
 		6: '#4', 7: '5', 8: 'b6', 9: '6', 10: 'b7', 11: '7'
 	};
 
+	const ALL_DEGREES = ['1', 'b2', '2', 'b3', '3', '4', '#4', '5', 'b6', '6', 'b7', '7'];
+
 	// --- Passive mode state ---
 	let mode = $state<'scale' | 'pattern'>('scale');
 	let compareOn = $state(false);
@@ -102,7 +104,7 @@
 	let crAutoAdvanceKey = $state(false);
 	let crAutoAdvanceEvery = $state('4'); // phrases per key
 	let crKeyAdvanceCount = $state(0);
-	let crExcludedDegrees = $state<string[]>([]);
+	let crIncludedDegrees = $state<string[]>([]);
 
 	// --- Shared playback state ---
 	let isPlaying = $state(false);
@@ -155,12 +157,12 @@
 		['naturalMinor', 'harmonicMinor', 'melodicMinor'].includes(scale);
 
 	const toggleDegree = (degree: string) => {
-		const all = getCallResponseDegrees();
-		const active = all.filter((d) => !crExcludedDegrees.includes(d));
-		if (crExcludedDegrees.includes(degree)) {
-			crExcludedDegrees = crExcludedDegrees.filter((d) => d !== degree);
-		} else if (active.length > 2) {
-			crExcludedDegrees = [...crExcludedDegrees, degree];
+		if (crIncludedDegrees.includes(degree)) {
+			if (crIncludedDegrees.length > 2) {
+				crIncludedDegrees = crIncludedDegrees.filter((d) => d !== degree);
+			}
+		} else {
+			crIncludedDegrees = [...crIncludedDegrees, degree];
 		}
 	};
 
@@ -228,7 +230,7 @@
 	);
 	const scaleDegreesForCR = $derived(getCallResponseDegrees());
 	const activeDegrees = $derived(
-		scaleDegreesForCR.filter((d) => !crExcludedDegrees.includes(d))
+		crIncludedDegrees.length >= 2 ? crIncludedDegrees : getCallResponseDegrees()
 	);
 
 	// --- Scale / pattern phrase logic ---
@@ -401,7 +403,7 @@
 		void crPhraseNotes;
 		void crMaxLeap;
 		void crRangeOctaves;
-		void crExcludedDegrees;
+		void crIncludedDegrees;
 		syncEngine();
 	});
 
@@ -427,11 +429,11 @@
 		if (mode !== 'pattern') showPhraseGuide = false;
 	});
 
-	// Reset excluded degrees when scale changes
+	// Reset included degrees to scale degrees when scale changes
 	$effect(() => {
 		void scaleSingle;
 		void diminishedMode;
-		crExcludedDegrees = [];
+		crIncludedDegrees = getCallResponseDegrees();
 	});
 
 	// Stop playback on format switch
@@ -967,22 +969,26 @@
 								<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
 									Active degrees
 								</div>
-								{#if crExcludedDegrees.length > 0}
+								{#if crIncludedDegrees.length !== scaleDegreesForCR.length || !scaleDegreesForCR.every((d) => crIncludedDegrees.includes(d))}
 									<button
 										class="text-xs text-muted-foreground hover:text-foreground"
-										onclick={() => (crExcludedDegrees = [])}
+										onclick={() => (crIncludedDegrees = getCallResponseDegrees())}
 									>
-										Reset all
+										Reset to scale
 									</button>
 								{/if}
 							</div>
 							<div class="flex flex-wrap gap-2">
-								{#each scaleDegreesForCR as degree}
+								{#each ALL_DEGREES as degree}
+									{@const inScale = scaleDegreesForCR.includes(degree)}
+									{@const isActive = crIncludedDegrees.includes(degree)}
 									<button
 										class={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
-											crExcludedDegrees.includes(degree)
-												? 'border border-border/60 bg-transparent text-muted-foreground/50'
-												: 'bg-primary/10 text-foreground'
+											isActive
+												? 'bg-primary/10 text-foreground'
+												: inScale
+													? 'border border-border/60 bg-transparent text-muted-foreground/50'
+													: 'border border-dashed border-border/40 bg-transparent text-muted-foreground/30'
 										}`}
 										onclick={() => toggleDegree(degree)}
 									>
@@ -991,10 +997,12 @@
 								{/each}
 							</div>
 							<div class="text-xs text-muted-foreground">
-								{activeDegrees.length} of {scaleDegreesForCR.length} degrees active.
-								{activeDegrees.length < scaleDegreesForCR.length
-									? 'Phrases draw only from highlighted degrees.'
-									: 'Start narrow, expand as you internalize each subset.'}
+								{activeDegrees.length} of 12 degrees active.
+								{activeDegrees.some((d) => !scaleDegreesForCR.includes(d))
+									? 'Includes chromatic degrees outside the scale.'
+									: activeDegrees.length < scaleDegreesForCR.length
+										? 'Phrases draw only from highlighted degrees.'
+										: 'Toggle chromatic degrees to train outside the scale.'}
 							</div>
 						</div>
 					</Card.Content>
