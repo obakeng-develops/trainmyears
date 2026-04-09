@@ -30,6 +30,7 @@ export type RhythmEngineConfig = {
 	floorSteps?: number;
 	layerSteps?: number;
 	dropout?: DropoutConfig;
+	swing?: number; // 0–100: 0 = straight, 50 = triplet swing, 100 = dotted
 };
 
 type RhythmEngineCallbacks = {
@@ -187,12 +188,22 @@ export class RhythmEngine {
 
 	private scheduleNotes() {
 		if (!this.ctx) return;
-		const { bpm } = this.config;
+		const { bpm, totalSteps, swing, mode } = this.config;
 		const intervalSec = 60 / bpm;
 		const currentTime = this.ctx.currentTime;
 		const scheduleAhead = 0.12;
+		// Swing only applies to even subdivisions in standard mode
+		const swingAmount = swing && mode !== 'floors' && totalSteps % 2 === 0
+			? clamp(swing, 0, 100) / 100
+			: 0;
+		const swingOffset = swingAmount * intervalSec * 0.5;
 		while (this.nextNoteTime < currentTime + scheduleAhead) {
-			this.scheduleBeat(this.nextBeatNumber, this.nextNoteTime);
+			// Apply swing: delay odd-indexed steps within each beat pair
+			const step = this.nextBeatNumber % totalSteps;
+			const swungTime = swingOffset > 0 && step % 2 === 1
+				? this.nextNoteTime + swingOffset
+				: this.nextNoteTime;
+			this.scheduleBeat(this.nextBeatNumber, swungTime);
 			this.nextNoteTime += intervalSec;
 			this.nextBeatNumber += 1;
 		}
