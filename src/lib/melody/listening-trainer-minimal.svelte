@@ -105,6 +105,9 @@
 	let trainingFormat = $state<'passive' | 'call-response'>('passive');
 	let onTheGo = $state(false);
 	let crPhraseNotes = $state('4'); // '2', '3', or '4'
+	let dictateMode = $state(false);
+	let dictationInput = $state<string[]>([]);
+	let dictationFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
 
 	// Shared playback state
 	let isPlaying = $state(false);
@@ -147,6 +150,32 @@
 	const isMinorLike = (scale: (typeof scaleOptions)[number]) =>
 		['naturalMinor', 'harmonicMinor', 'melodicMinor'].includes(scale);
 
+	// --- Dictation helpers ---
+
+	const dictationExpected = $derived(Number(crPhraseNotes));
+
+	const pushDictation = (degree: string) => {
+		if (dictationFeedback !== 'idle') return;
+		if (dictationInput.length >= dictationExpected) return;
+		dictationInput = [...dictationInput, degree];
+	};
+
+	const popDictation = () => {
+		if (dictationFeedback !== 'idle') return;
+		dictationInput = dictationInput.slice(0, -1);
+	};
+
+	const submitDictation = () => {
+		if (dictationInput.length !== dictationExpected) return;
+		const correct = dictationInput.every((d, i) => d === phraseGuide[i]);
+		dictationFeedback = correct ? 'correct' : 'incorrect';
+	};
+
+	const resetDictation = () => {
+		dictationInput = [];
+		dictationFeedback = 'idle';
+	};
+
 	// --- Engine ---
 
 	const engine = new MelodyEngine({
@@ -158,6 +187,7 @@
 		onPhrase: (phrase: any) => {
 			phraseGuide = phrase.map((n: any) => n.degree);
 			showPhraseGuide = false;
+			resetDictation();
 		},
 		onLoop: () => {
 			if (trainingFormat === 'passive' && mode === 'pattern') {
@@ -410,7 +440,8 @@
 				droneOn,
 				trainingFormat,
 				onTheGo,
-				crPhraseNotes
+				crPhraseNotes,
+				dictateMode
 			})
 		);
 	});
@@ -435,6 +466,7 @@
 				trainingFormat: 'passive' | 'call-response';
 				onTheGo: boolean;
 				crPhraseNotes: string;
+				dictateMode: boolean;
 			}>;
 			if (saved.mode) mode = saved.mode;
 			if (saved.scaleSingle) scaleSingle = saved.scaleSingle;
@@ -447,6 +479,7 @@
 			if (saved.trainingFormat) trainingFormat = saved.trainingFormat;
 			if (typeof saved.onTheGo === 'boolean') onTheGo = saved.onTheGo;
 			if (saved.crPhraseNotes) crPhraseNotes = saved.crPhraseNotes;
+			if (typeof saved.dictateMode === 'boolean') dictateMode = saved.dictateMode;
 		} catch {
 			// ignore
 		}
@@ -707,30 +740,98 @@
 
 				<!-- Echo phase actions -->
 				{#if stage === 'rest'}
-					<div class="flex flex-wrap items-center gap-3">
-						{#if onTheGo}
+					{#if dictateMode}
+						<!-- Dictation input -->
+						<div class="space-y-3">
+							<div class="flex min-h-[2.25rem] flex-wrap items-center gap-1 rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+								{#each dictationInput as degree, i}
+									<span
+										class={`rounded px-2 py-0.5 text-xs font-semibold ${
+											dictationFeedback === 'idle'
+												? 'bg-primary/10 text-foreground'
+												: degree === phraseGuide[i]
+													? 'bg-emerald-500/15 text-emerald-300'
+													: 'bg-rose-500/15 text-rose-300'
+										}`}
+									>
+										{degree}
+									</span>
+								{/each}
+								{#if dictationInput.length < dictationExpected && dictationFeedback === 'idle'}
+									<span class="text-xs text-muted-foreground/40">
+										{dictationExpected - dictationInput.length} left
+									</span>
+								{/if}
+							</div>
+							<div class="flex flex-wrap gap-1.5">
+								{#each getCallResponseDegrees() as degree}
+									<button
+										class="rounded-full bg-[var(--surface-2)] px-3 py-1 text-xs font-semibold text-foreground transition-colors hover:bg-primary/10 disabled:opacity-40"
+										disabled={dictationFeedback !== 'idle' || dictationInput.length >= dictationExpected}
+										onclick={() => pushDictation(degree)}
+									>
+										{degree}
+									</button>
+								{/each}
+							</div>
+							<div class="flex flex-wrap items-center gap-2">
+								{#if dictationInput.length > 0 && dictationFeedback === 'idle'}
+									<Button size="sm" variant="ghost" onclick={popDictation}>
+										Undo
+									</Button>
+								{/if}
+								{#if dictationInput.length === dictationExpected && dictationFeedback === 'idle'}
+									<Button size="sm" onclick={submitDictation}>
+										Check
+									</Button>
+								{/if}
+								{#if dictationFeedback !== 'idle'}
+									<div
+										class={`rounded-lg border border-border/60 px-3 py-1.5 text-xs font-semibold ring-1 ${
+											dictationFeedback === 'correct'
+												? 'bg-emerald-500/10 text-emerald-200 ring-emerald-400/30'
+												: 'bg-rose-500/10 text-rose-200 ring-rose-400/30'
+										}`}
+									>
+										{dictationFeedback === 'correct'
+											? 'Correct!'
+											: `Answer: ${phraseGuide.join(' · ')}`}
+									</div>
+								{/if}
+								{#if onTheGo}
+									<Button size="sm" variant="secondary" onclick={() => engine.playPhraseOnce()}>
+										Replay
+									</Button>
+								{/if}
+							</div>
+						</div>
+					{:else}
+						<!-- Honor system (original) -->
+						<div class="flex flex-wrap items-center gap-3">
+							{#if onTheGo}
+								<Button
+									size="sm"
+									variant="secondary"
+									onclick={() => engine.playPhraseOnce()}
+								>
+									Replay phrase
+								</Button>
+							{/if}
 							<Button
 								size="sm"
-								variant="secondary"
-								onclick={() => engine.playPhraseOnce()}
+								variant="ghost"
+								onclick={() => (showPhraseGuide = !showPhraseGuide)}
 							>
-								Replay phrase
+								{showPhraseGuide ? 'Hide notes' : 'Reveal notes'}
 							</Button>
-						{/if}
-						<Button
-							size="sm"
-							variant="ghost"
-							onclick={() => (showPhraseGuide = !showPhraseGuide)}
-						>
-							{showPhraseGuide ? 'Hide notes' : 'Reveal notes'}
-						</Button>
-					</div>
-					{#if showPhraseGuide}
-						<div
-							class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground"
-						>
-							{phraseGuide.join(' · ')}
 						</div>
+						{#if showPhraseGuide}
+							<div
+								class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground"
+							>
+								{phraseGuide.join(' · ')}
+							</div>
+						{/if}
 					{/if}
 				{/if}
 
@@ -850,6 +951,16 @@
 						<div class="text-xs text-muted-foreground">No instrument — sing or audiate</div>
 					</div>
 					<Switch bind:checked={onTheGo} />
+				</div>
+				<!-- Dictation toggle -->
+				<div
+					class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+				>
+					<div>
+						<div class="text-xs font-medium text-foreground">Dictation</div>
+						<div class="text-xs text-muted-foreground">Tap degrees to check your ear</div>
+					</div>
+					<Switch bind:checked={dictateMode} />
 				</div>
 			{/if}
 
