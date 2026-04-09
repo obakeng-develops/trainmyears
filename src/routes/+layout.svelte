@@ -14,7 +14,9 @@
 				? 'harmony'
 				: isSection('/melody')
 					? 'melody'
-					: null;
+					: isSection('/progression')
+						? 'progression'
+						: null;
 	const isAdvancedRoute = () => $page.url.pathname.includes('/advanced');
 </script>
 
