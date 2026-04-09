@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
+	import { Slider } from '$lib/components/ui/slider/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { MelodyEngine } from '$lib/melody/engine';
 
@@ -76,12 +77,36 @@
 		challenging: 'Challenging'
 	};
 
+	// Degree mapping for call-and-response random phrase generation
+	const OFFSET_TO_DEGREE: Record<number, string> = {
+		0: '1',
+		1: 'b2',
+		2: '2',
+		3: 'b3',
+		4: '3',
+		5: '4',
+		6: '#4',
+		7: '5',
+		8: 'b6',
+		9: '6',
+		10: 'b7',
+		11: '7'
+	};
+
+	// Passive mode state
 	let mode = $state<'scale' | 'pattern'>('scale');
 	let scaleSingle = $state<(typeof scaleOptions)[number]>('major');
 	let diminishedMode = $state<'whole-half' | 'half-whole'>('whole-half');
 	let phraseBars = $state(4);
 	let tonic = $state('0');
 	let droneOn = $state(true);
+
+	// Call-and-response mode state
+	let trainingFormat = $state<'passive' | 'call-response'>('passive');
+	let onTheGo = $state(false);
+	let crPhraseNotes = $state('4'); // '2', '3', or '4'
+
+	// Shared playback state
 	let isPlaying = $state(false);
 	let stage = $state<'idle' | 'count-in' | 'playing' | 'rest'>('idle');
 	let currentStep = $state(0);
@@ -99,14 +124,12 @@
 
 	const settingsKey = 'melody-listening-settings';
 
+	// --- Passive mode helpers ---
+
 	const getPatternPool = () => {
 		const set = patternBank.mixed ?? [];
-		if (quickstartFocus === 'easy') {
-			return set.filter((_, index) => [0, 1, 2].includes(index));
-		}
-		if (quickstartFocus === 'challenging') {
-			return set.filter((_, index) => [3, 5, 6].includes(index));
-		}
+		if (quickstartFocus === 'easy') return set.filter((_, i) => [0, 1, 2].includes(i));
+		if (quickstartFocus === 'challenging') return set.filter((_, i) => [3, 5, 6].includes(i));
 		return set;
 	};
 
@@ -116,18 +139,34 @@
 		currentPatternPoolKey = '';
 	};
 
+	// --- Call-and-response helpers ---
+
+	const getCallResponseDegrees = () =>
+		scaleOffsets(scaleSingle).map((o) => OFFSET_TO_DEGREE[o] ?? '1');
+
+	const isMinorLike = (scale: (typeof scaleOptions)[number]) =>
+		['naturalMinor', 'harmonicMinor', 'melodicMinor'].includes(scale);
+
+	// --- Engine ---
+
 	const engine = new MelodyEngine({
 		onTick: (tick: any) => {
 			stage = tick.stage ?? 'idle';
 			currentStep = tick.step ?? 0;
 			currentLabel = String(tick.degree ?? '');
 		},
+		onPhrase: (phrase: any) => {
+			phraseGuide = phrase.map((n: any) => n.degree);
+			showPhraseGuide = false;
+		},
 		onLoop: () => {
-			if (mode === 'pattern') {
+			if (trainingFormat === 'passive' && mode === 'pattern') {
 				applyPatternPhrase({ advanceCycle: true });
 			}
 		}
 	} as any);
+
+	// --- Derived values ---
 
 	const keyLabel = $derived(keyOptions.find((item) => String(item.pc) === tonic)?.label ?? 'C');
 	const phraseLength = $derived(Math.max(4, phraseBars * 4));
@@ -141,6 +180,20 @@
 			sequenceLength > 0 &&
 			currentStep % sequenceLength === turnaroundStep
 	);
+
+	// Call-and-response derived values
+	const crNotesCount = $derived(Number(crPhraseNotes));
+	const crLoopBeats = $derived(Math.ceil(crNotesCount / 2) * 4);
+	const crRestBeats = $derived(crLoopBeats - crNotesCount);
+	const crPhaseProgress = $derived(
+		stage === 'playing'
+			? Math.min((currentStep + 1) / crNotesCount, 1)
+			: stage === 'rest' && crRestBeats > 0
+				? Math.min((currentStep - crNotesCount + 1) / crRestBeats, 1)
+				: 0
+	);
+
+	// --- Scale/pattern logic ---
 
 	const scaleOffsets = (scale: (typeof scaleOptions)[number]) => {
 		switch (scale) {
@@ -241,13 +294,28 @@
 		engine.setPhrase(notes);
 	};
 
-	const preloadSamples = () => {
-		if (preloadTriggered) return;
-		preloadTriggered = true;
-		void (engine as any).loadSampler?.();
-	};
+	// --- Engine sync ---
 
 	const syncEngine = () => {
+		if (trainingFormat === 'call-response') {
+			const loopBars = Math.ceil(crNotesCount / 2);
+			engine.setConfig({
+				bpm,
+				keyPc: Number(tonic),
+				mode: isMinorLike(scaleSingle) ? 'minor' : 'major',
+				phraseLength: crNotesCount,
+				loopBars,
+				loop: true,
+				countInBars: 0,
+				regenerateOnLoop: true,
+				allowedDegrees: getCallResponseDegrees(),
+				maxLeap: quickstartFocus === 'easy' ? 1 : quickstartFocus === 'challenging' ? 3 : 2,
+				startOnTonic: quickstartFocus === 'easy',
+				rangeOctaves: 1
+			});
+			if (!untrack(() => isPlaying)) engine.generatePhrase();
+			return;
+		}
 		engine.setConfig({
 			bpm,
 			keyPc: Number(tonic),
@@ -264,6 +332,12 @@
 		applyPatternPhrase({ advanceCycle: false });
 	};
 
+	const preloadSamples = () => {
+		if (preloadTriggered) return;
+		preloadTriggered = true;
+		void (engine as any).loadSampler?.();
+	};
+
 	const togglePlayback = async () => {
 		if (isPlaying) {
 			engine.stop();
@@ -278,6 +352,8 @@
 		isPlaying = true;
 	};
 
+	// --- Effects ---
+
 	$effect(() => {
 		void bpm;
 		void phraseBars;
@@ -286,6 +362,8 @@
 		void scaleSingle;
 		void diminishedMode;
 		void quickstartFocus;
+		void trainingFormat;
+		void crPhraseNotes;
 		syncEngine();
 	});
 
@@ -300,7 +378,6 @@
 
 	$effect(() => {
 		if (mode === 'pattern') {
-			// keep scale context for pattern mode
 			applyPatternPhrase({ advanceCycle: false });
 		}
 	});
@@ -330,7 +407,10 @@
 				showPhraseGuide,
 				phraseBars,
 				tonic,
-				droneOn
+				droneOn,
+				trainingFormat,
+				onTheGo,
+				crPhraseNotes
 			})
 		);
 	});
@@ -352,6 +432,9 @@
 				phraseBars: number;
 				tonic: string;
 				droneOn: boolean;
+				trainingFormat: 'passive' | 'call-response';
+				onTheGo: boolean;
+				crPhraseNotes: string;
 			}>;
 			if (saved.mode) mode = saved.mode;
 			if (saved.scaleSingle) scaleSingle = saved.scaleSingle;
@@ -361,6 +444,9 @@
 			if (typeof saved.phraseBars === 'number') phraseBars = saved.phraseBars;
 			if (typeof saved.tonic === 'string') tonic = saved.tonic;
 			if (typeof saved.droneOn === 'boolean') droneOn = saved.droneOn;
+			if (saved.trainingFormat) trainingFormat = saved.trainingFormat;
+			if (typeof saved.onTheGo === 'boolean') onTheGo = saved.onTheGo;
+			if (saved.crPhraseNotes) crPhraseNotes = saved.crPhraseNotes;
 		} catch {
 			// ignore
 		}
@@ -378,7 +464,13 @@
 		<Card.Header class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 			<div>
 				<Card.Title class="font-display text-xl">Melody Quickstart</Card.Title>
-				<Card.Description>Listen to scales or patterns against a drone.</Card.Description>
+				<Card.Description>
+					{trainingFormat === 'call-response'
+						? onTheGo
+							? 'Hear a phrase, then sing or audiate it.'
+							: 'Hear a phrase, then play it back on your instrument.'
+						: 'Listen to scales or patterns against a drone.'}
+				</Card.Description>
 			</div>
 			<div class="flex items-center gap-3">
 				<Badge variant="secondary" class="text-xs">Drone {keyLabel}</Badge>
@@ -386,145 +478,387 @@
 			</div>
 		</Card.Header>
 		<Card.Content class="space-y-6">
-			<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
-				<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-					Now hearing
-				</div>
-				<div class="mt-2 text-sm">
-					{mode === 'scale' ? `${displayScale} in ${keyLabel}` : `Pattern in ${keyLabel}`}
-				</div>
-				{#if isTurnaround}
-					<div class="mt-2">
-						<Badge variant="secondary" class="text-xs">Turnaround</Badge>
-					</div>
-				{/if}
-			</div>
-			<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
-				<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-					What to listen for
-				</div>
-				<div class="mt-2 text-sm">
-					{mode === 'scale'
-						? 'Hear how the scale leans against the tonic: bright, dark, or tense.'
-						: 'Notice the motif shape; it repeats twice, then shifts.'}
-				</div>
-				<div class="mt-3 flex flex-wrap items-center gap-2">
-					<Button
-						size="sm"
-						variant="secondary"
-						onclick={() => (showPhraseGuide = !showPhraseGuide)}
-					>
-						{showPhraseGuide ? 'Hide phrase guide' : 'Reveal phrase guide'}
-					</Button>
-					<div class="text-xs text-muted-foreground">
-						Use after your first mental/voice recall attempt.
-					</div>
-				</div>
-				{#if showPhraseGuide}
-					<div
-						class="mt-3 rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground"
-					>
-						{phraseGuide.slice(0, 12).join(' · ')}
-						{phraseGuide.length > 12 ? ' · ...' : ''}
-					</div>
-				{/if}
-			</div>
-			<div class="grid gap-4 md:grid-cols-2">
-				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-						Mode
-					</div>
-					<ToggleGroup.Root type="single" bind:value={mode} class="mt-2 flex flex-wrap gap-2">
-						<ToggleGroup.Item value="scale" class="px-3 text-xs">Scale</ToggleGroup.Item>
-						<ToggleGroup.Item value="pattern" class="px-3 text-xs">Pattern</ToggleGroup.Item>
-					</ToggleGroup.Root>
-				</div>
-				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-						Tonic
-					</div>
-					<Select.Root type="single" bind:value={tonic as never}>
-						<Select.Trigger class="w-full">
-							<span>{keyLabel}</span>
-						</Select.Trigger>
-						<Select.Content>
-							{#each keyOptions as keyOption}
-								<Select.Item value={String(keyOption.pc)}>{keyOption.label}</Select.Item>
-							{/each}
-						</Select.Content>
-					</Select.Root>
-				</div>
-			</div>
-			<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-				<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Focus</div>
-				<ToggleGroup.Root
-					type="single"
-					bind:value={quickstartFocus}
-					class="mt-2 flex flex-wrap gap-2"
+
+			<!-- Training format toggle -->
+			<div class="flex gap-1 rounded-xl border border-border/60 bg-[var(--surface-2)] p-1">
+				<button
+					class={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+						trainingFormat === 'passive'
+							? 'bg-background text-foreground shadow-sm'
+							: 'text-muted-foreground hover:text-foreground'
+					}`}
+					onclick={() => {
+						if (trainingFormat !== 'passive') {
+							trainingFormat = 'passive';
+							if (isPlaying) { engine.stop(); isPlaying = false; stage = 'idle'; }
+						}
+					}}
 				>
-					{#each quickstartFocusOptions as option}
-						<ToggleGroup.Item value={option} class="px-3 text-xs">
-							{quickstartFocusLabels[option]}
-						</ToggleGroup.Item>
-					{/each}
-				</ToggleGroup.Root>
-				<div class="mt-2 text-xs text-muted-foreground">
-					{quickstartFocus === 'easy'
-						? 'Mostly stepwise motifs.'
-						: quickstartFocus === 'challenging'
-							? 'Wider interval motifs.'
-							: 'Balanced mix of motifs.'}
-				</div>
+					Listen
+				</button>
+				<button
+					class={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+						trainingFormat === 'call-response'
+							? 'bg-background text-foreground shadow-sm'
+							: 'text-muted-foreground hover:text-foreground'
+					}`}
+					onclick={() => {
+						if (trainingFormat !== 'call-response') {
+							trainingFormat = 'call-response';
+							if (isPlaying) { engine.stop(); isPlaying = false; stage = 'idle'; }
+						}
+					}}
+				>
+					Call & Response
+				</button>
 			</div>
-			{#if mode === 'scale'}
-				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+
+			<!-- Passive mode content -->
+			{#if trainingFormat === 'passive'}
+				<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
 					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-						Scale
+						Now hearing
 					</div>
-					<ToggleGroup.Root
-						type="single"
-						bind:value={scaleSingle}
-						class="mt-2 flex flex-wrap gap-2"
-					>
-						{#each scaleOptions as option}
-							<ToggleGroup.Item value={option} class="px-3 text-xs"
-								>{scaleLabels[option]}</ToggleGroup.Item
-							>
-						{/each}
-					</ToggleGroup.Root>
-					{#if scaleSingle === 'diminished'}
-						<div class="mt-3 flex flex-wrap gap-2">
-							<ToggleGroup.Root
-								type="single"
-								bind:value={diminishedMode}
-								class="flex flex-wrap gap-2"
-							>
-								<ToggleGroup.Item value="whole-half" class="px-3 text-xs"
-									>Whole-Half</ToggleGroup.Item
-								>
-								<ToggleGroup.Item value="half-whole" class="px-3 text-xs"
-									>Half-Whole</ToggleGroup.Item
-								>
-							</ToggleGroup.Root>
+					<div class="mt-2 text-sm">
+						{mode === 'scale' ? `${displayScale} in ${keyLabel}` : `Pattern in ${keyLabel}`}
+					</div>
+					{#if isTurnaround}
+						<div class="mt-2">
+							<Badge variant="secondary" class="text-xs">Turnaround</Badge>
 						</div>
 					{/if}
 				</div>
+				<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						What to listen for
+					</div>
+					<div class="mt-2 text-sm">
+						{mode === 'scale'
+							? 'Hear how the scale leans against the tonic: bright, dark, or tense.'
+							: 'Notice the motif shape; it repeats twice, then shifts.'}
+					</div>
+					<div class="mt-3 flex flex-wrap items-center gap-2">
+						<Button
+							size="sm"
+							variant="secondary"
+							onclick={() => (showPhraseGuide = !showPhraseGuide)}
+						>
+							{showPhraseGuide ? 'Hide phrase guide' : 'Reveal phrase guide'}
+						</Button>
+						<div class="text-xs text-muted-foreground">
+							Use after your first mental/voice recall attempt.
+						</div>
+					</div>
+					{#if showPhraseGuide}
+						<div
+							class="mt-3 rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground"
+						>
+							{phraseGuide.slice(0, 12).join(' · ')}
+							{phraseGuide.length > 12 ? ' · ...' : ''}
+						</div>
+					{/if}
+				</div>
+				<div class="grid gap-4 md:grid-cols-2">
+					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+						<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+							Mode
+						</div>
+						<ToggleGroup.Root type="single" bind:value={mode} class="mt-2 flex flex-wrap gap-2">
+							<ToggleGroup.Item value="scale" class="px-3 text-xs">Scale</ToggleGroup.Item>
+							<ToggleGroup.Item value="pattern" class="px-3 text-xs">Pattern</ToggleGroup.Item>
+						</ToggleGroup.Root>
+					</div>
+					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+						<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+							Tonic
+						</div>
+						<Select.Root type="single" bind:value={tonic as never}>
+							<Select.Trigger class="w-full">
+								<span>{keyLabel}</span>
+							</Select.Trigger>
+							<Select.Content>
+								{#each keyOptions as keyOption}
+									<Select.Item value={String(keyOption.pc)}>{keyOption.label}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
+				</div>
+				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Focus
+					</div>
+					<ToggleGroup.Root
+						type="single"
+						bind:value={quickstartFocus}
+						class="mt-2 flex flex-wrap gap-2"
+					>
+						{#each quickstartFocusOptions as option}
+							<ToggleGroup.Item value={option} class="px-3 text-xs">
+								{quickstartFocusLabels[option]}
+							</ToggleGroup.Item>
+						{/each}
+					</ToggleGroup.Root>
+					<div class="mt-2 text-xs text-muted-foreground">
+						{quickstartFocus === 'easy'
+							? 'Mostly stepwise motifs.'
+							: quickstartFocus === 'challenging'
+								? 'Wider interval motifs.'
+								: 'Balanced mix of motifs.'}
+					</div>
+				</div>
+				{#if mode === 'scale'}
+					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+						<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+							Scale
+						</div>
+						<ToggleGroup.Root
+							type="single"
+							bind:value={scaleSingle}
+							class="mt-2 flex flex-wrap gap-2"
+						>
+							{#each scaleOptions as option}
+								<ToggleGroup.Item value={option} class="px-3 text-xs"
+									>{scaleLabels[option]}</ToggleGroup.Item
+								>
+							{/each}
+						</ToggleGroup.Root>
+						{#if scaleSingle === 'diminished'}
+							<div class="mt-3 flex flex-wrap gap-2">
+								<ToggleGroup.Root
+									type="single"
+									bind:value={diminishedMode}
+									class="flex flex-wrap gap-2"
+								>
+									<ToggleGroup.Item value="whole-half" class="px-3 text-xs"
+										>Whole-Half</ToggleGroup.Item
+									>
+									<ToggleGroup.Item value="half-whole" class="px-3 text-xs"
+										>Half-Whole</ToggleGroup.Item
+									>
+								</ToggleGroup.Root>
+							</div>
+						{/if}
+					</div>
+				{/if}
+				<div class="h-2 w-full rounded-full bg-border/60">
+					<div
+						class="h-full rounded-full bg-primary/70"
+						style={`width: ${progressPercent}%`}
+					></div>
+				</div>
+				<div class="text-xs text-muted-foreground">
+					{stage === 'playing'
+						? `Current note: ${currentLabel}`
+						: stage === 'idle'
+							? 'Stopped'
+							: stage}
+				</div>
 			{/if}
+
+			<!-- Call & Response content -->
+			{#if trainingFormat === 'call-response'}
+				<!-- Phase indicator -->
+				<div
+					class={`rounded-2xl border p-6 text-center transition-colors ${
+						stage === 'playing'
+							? 'border-primary/30 bg-primary/5'
+							: stage === 'rest'
+								? 'border-amber-500/30 bg-amber-500/5'
+								: 'border-border/70 bg-[var(--surface-1)]'
+					}`}
+				>
+					{#if stage === 'idle' || stage === 'count-in'}
+						<div class="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+							Ready
+						</div>
+						<div class="mt-1 text-2xl font-semibold text-muted-foreground">—</div>
+						<div class="mt-1 text-xs text-muted-foreground">Press play to start.</div>
+					{:else if stage === 'playing'}
+						<div class="text-xs font-semibold uppercase tracking-[0.3em] text-primary/70">
+							Listen
+						</div>
+						<div class="mt-1 text-2xl font-semibold text-foreground">Hear it</div>
+						<div class="mt-1 text-xs text-muted-foreground">
+							{onTheGo ? 'Hold the phrase in your mind.' : 'Take it in.'}
+						</div>
+					{:else if stage === 'rest'}
+						<div class="text-xs font-semibold uppercase tracking-[0.3em] text-amber-600/80">
+							{onTheGo ? 'Sing' : 'Echo'}
+						</div>
+						<div class="mt-1 text-2xl font-semibold text-foreground">
+							{onTheGo ? 'Sing it' : 'Play it back'}
+						</div>
+						<div class="mt-1 text-xs text-muted-foreground">
+							{onTheGo ? 'Sing or audiate it before it plays again.' : 'Play it on your instrument before the next phrase.'}
+						</div>
+					{/if}
+
+					<!-- Phase progress bar -->
+					{#if stage === 'playing' || stage === 'rest'}
+						<div class="mt-4 h-1.5 w-full rounded-full bg-border/60">
+							<div
+								class={`h-full rounded-full transition-none ${stage === 'playing' ? 'bg-primary/70' : 'bg-amber-500/70'}`}
+								style={`width: ${crPhaseProgress * 100}%`}
+							></div>
+						</div>
+					{/if}
+				</div>
+
+				<!-- Echo phase actions -->
+				{#if stage === 'rest'}
+					<div class="flex flex-wrap items-center gap-3">
+						{#if onTheGo}
+							<Button
+								size="sm"
+								variant="secondary"
+								onclick={() => engine.playPhraseOnce()}
+							>
+								Replay phrase
+							</Button>
+						{/if}
+						<Button
+							size="sm"
+							variant="ghost"
+							onclick={() => (showPhraseGuide = !showPhraseGuide)}
+						>
+							{showPhraseGuide ? 'Hide notes' : 'Reveal notes'}
+						</Button>
+					</div>
+					{#if showPhraseGuide}
+						<div
+							class="rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground"
+						>
+							{phraseGuide.join(' · ')}
+						</div>
+					{/if}
+				{/if}
+
+				<!-- Call-and-response settings -->
+				<div class="grid gap-4 md:grid-cols-2">
+					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+						<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+							Phrase
+						</div>
+						<ToggleGroup.Root
+							type="single"
+							bind:value={crPhraseNotes}
+							class="mt-2 flex gap-2"
+						>
+							<ToggleGroup.Item value="2" class="px-3 text-xs">2 notes</ToggleGroup.Item>
+							<ToggleGroup.Item value="3" class="px-3 text-xs">3 notes</ToggleGroup.Item>
+							<ToggleGroup.Item value="4" class="px-3 text-xs">4 notes</ToggleGroup.Item>
+						</ToggleGroup.Root>
+					</div>
+					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+						<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+							Tonic
+						</div>
+						<Select.Root type="single" bind:value={tonic as never}>
+							<Select.Trigger class="w-full">
+								<span>{keyLabel}</span>
+							</Select.Trigger>
+							<Select.Content>
+								{#each keyOptions as keyOption}
+									<Select.Item value={String(keyOption.pc)}>{keyOption.label}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
+				</div>
+				<div class="grid gap-4 md:grid-cols-2">
+					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+						<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+							Scale
+						</div>
+						<ToggleGroup.Root
+							type="single"
+							bind:value={scaleSingle}
+							class="mt-2 flex flex-wrap gap-2"
+						>
+							{#each scaleOptions as option}
+								<ToggleGroup.Item value={option} class="px-3 text-xs">
+									{scaleLabels[option]}
+								</ToggleGroup.Item>
+							{/each}
+						</ToggleGroup.Root>
+						{#if scaleSingle === 'diminished'}
+							<div class="mt-3 flex flex-wrap gap-2">
+								<ToggleGroup.Root
+									type="single"
+									bind:value={diminishedMode}
+									class="flex flex-wrap gap-2"
+								>
+									<ToggleGroup.Item value="whole-half" class="px-3 text-xs">Whole-Half</ToggleGroup.Item>
+									<ToggleGroup.Item value="half-whole" class="px-3 text-xs">Half-Whole</ToggleGroup.Item>
+								</ToggleGroup.Root>
+							</div>
+						{/if}
+					</div>
+					<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+						<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+							Difficulty
+						</div>
+						<ToggleGroup.Root
+							type="single"
+							bind:value={quickstartFocus}
+							class="mt-2 flex flex-wrap gap-2"
+						>
+							{#each quickstartFocusOptions as option}
+								<ToggleGroup.Item value={option} class="px-3 text-xs">
+									{quickstartFocusLabels[option]}
+								</ToggleGroup.Item>
+							{/each}
+						</ToggleGroup.Root>
+						<div class="mt-2 text-xs text-muted-foreground">
+							{quickstartFocus === 'easy'
+								? 'Stepwise motion, starts on tonic.'
+								: quickstartFocus === 'challenging'
+									? 'Wider leaps, anywhere in the scale.'
+									: 'Mixed intervals.'}
+						</div>
+					</div>
+				</div>
+
+				<!-- Tempo slider -->
+				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+					<div class="flex items-center justify-between">
+						<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+							Tempo
+						</div>
+						<span class="text-xs text-muted-foreground">{bpm} bpm</span>
+					</div>
+					<Slider
+						class="mt-3"
+						min={50}
+						max={160}
+						step={2}
+						value={[bpm]}
+						onValueChange={([v]: number[]) => (bpm = v)}
+					/>
+					<div class="mt-2 text-xs text-muted-foreground">
+						Lower tempo = more time to respond. Increase to build speed.
+					</div>
+				</div>
+
+				<!-- On the go toggle -->
+				<div
+					class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+				>
+					<div>
+						<div class="text-xs font-medium text-foreground">On the go</div>
+						<div class="text-xs text-muted-foreground">No instrument — sing or audiate</div>
+					</div>
+					<Switch bind:checked={onTheGo} />
+				</div>
+			{/if}
+
+			<!-- Drone (shared) -->
 			<div
 				class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
 			>
 				<span class="text-xs text-muted-foreground">Drone</span>
 				<Switch bind:checked={droneOn} />
-			</div>
-			<div class="h-2 w-full rounded-full bg-border/60">
-				<div class="h-full rounded-full bg-primary/70" style={`width: ${progressPercent}%`}></div>
-			</div>
-			<div class="text-xs text-muted-foreground">
-				{stage === 'playing'
-					? `Current note: ${currentLabel}`
-					: stage === 'idle'
-						? 'Stopped'
-						: stage}
 			</div>
 		</Card.Content>
 	</Card.Root>

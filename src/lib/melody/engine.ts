@@ -356,6 +356,23 @@ export class MelodyEngine {
 		this.callbacks.onPhrase?.(phrase);
 	}
 
+	playPhraseOnce() {
+		const tone = this.tone;
+		if (!tone) return;
+		const intervalSec = 60 / this.config.bpm;
+		let time = tone.now() + 0.05;
+		for (const note of this.phrase) {
+			if (this.samplerReady && this.sampler) {
+				const noteName = tone.Frequency(note.midi, 'midi').toNote();
+				if (noteName) this.sampler.triggerAttackRelease(noteName, 0.75, time, 0.7);
+			} else if (this.synth) {
+				const freq = tone.Frequency(note.midi, 'midi').toFrequency();
+				this.synth.triggerAttackRelease(freq, 0.55, time);
+			}
+			time += intervalSec;
+		}
+	}
+
 	private ensureSynth() {
 		const tone = this.tone;
 		if (!tone) return;
