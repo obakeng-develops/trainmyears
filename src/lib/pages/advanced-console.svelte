@@ -1550,7 +1550,7 @@ const floorSyllables: Record<number, string[]> = {
 		<header class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
 			<div class="space-y-2">
 				<div class="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
-					Phase 1 · {phaseLabels[phase]}
+					{phaseLabels[phase]}
 				</div>
 			<h1 class="font-display text-2xl font-semibold text-foreground md:text-4xl">
 				{consoleTitle}
