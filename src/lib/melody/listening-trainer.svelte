@@ -187,6 +187,9 @@
 						const idx = CIRCLE_OF_FIFTHS.indexOf(Number(tonic));
 						const next = CIRCLE_OF_FIFTHS[(idx + 1) % 12] ?? 0;
 						tonic = String(next);
+						// Push new key to the engine immediately so the upcoming
+						// generatePhrase() (called right after onLoop) uses it.
+						engine.setConfig({ keyPc: next });
 					}
 				}
 				return;
