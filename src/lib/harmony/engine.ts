@@ -3,7 +3,8 @@ type ToneModule = typeof import('tone');
 export type TriadType = 'major' | 'minor' | 'diminished' | 'augmented';
 export type SeventhType =
 	| 'maj7' | 'dom7' | 'min7' | 'm7b5' | 'dim7'
-	| 'dom7b5' | 'aug7' | 'dom7sus4' | 'dom9' | 'dom7b9' | 'dom7s9';
+	| 'dom7b5' | 'aug7' | 'dom7sus4' | 'dom9' | 'dom7b9' | 'dom7s9'
+	| 'dom7s9s5' | 'dom7b9b5' | 'minMaj7';
 export type ChordQuality = TriadType | SeventhType;
 
 export type HarmonyChord = {
@@ -32,7 +33,10 @@ const CHORD_INTERVALS: Record<ChordQuality, number[]> = {
 	dom7sus4: [0, 5, 7, 10],
 	dom9: [0, 4, 7, 10, 14],
 	dom7b9: [0, 4, 7, 10, 13],
-	dom7s9: [0, 4, 7, 10, 15]
+	dom7s9: [0, 4, 7, 10, 15],
+	dom7s9s5: [0, 4, 8, 10, 15],
+	dom7b9b5: [0, 4, 6, 10, 13],
+	minMaj7: [0, 3, 7, 11]
 };
 
 const SALAMANDER_BASE_URL = 'https://tonejs.github.io/audio/salamander/';

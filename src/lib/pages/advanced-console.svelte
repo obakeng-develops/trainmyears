@@ -842,7 +842,10 @@ const floorSyllables: Record<number, string[]> = {
 		{ value: 'dom7sus4', label: '7sus4' },
 		{ value: 'dom9', label: '9' },
 		{ value: 'dom7b9', label: '7b9' },
-		{ value: 'dom7s9', label: '7#9' }
+		{ value: 'dom7s9', label: '7#9' },
+		{ value: 'dom7s9s5', label: '7#9#5' },
+		{ value: 'dom7b9b5', label: '7b9b5' },
+		{ value: 'minMaj7', label: 'min(maj7)' }
 	];
 	const majorScaleOffsets = [0, 2, 4, 5, 7, 9, 11];
 	const minorScaleOffsets = [0, 2, 3, 5, 7, 8, 10];
