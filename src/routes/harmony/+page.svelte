@@ -554,7 +554,7 @@
 										<span>{contextQuality}</span>
 									</Select.Trigger>
 									<Select.Content>
-										{#each ['major','minor','diminished','augmented','maj7','dom7','min7','m7b5','dim7'] as quality}
+										{#each ['major','minor','diminished','augmented','maj7','dom7','min7','m7b5','dim7','dom7b5','aug7','dom7sus4','dom9','dom7b9','dom7s9'] as quality}
 											<Select.Item value={quality}>{quality}</Select.Item>
 										{/each}
 									</Select.Content>
