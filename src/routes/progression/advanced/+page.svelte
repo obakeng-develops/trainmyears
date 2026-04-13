@@ -36,7 +36,16 @@
 		{ value: 'dom7', label: '7' },
 		{ value: 'min7', label: 'min7' },
 		{ value: 'm7b5', label: 'm7b5' },
-		{ value: 'dim7', label: 'dim7' }
+		{ value: 'dim7', label: 'dim7' },
+		{ value: 'dom7b5', label: '7b5' },
+		{ value: 'aug7', label: 'aug7' },
+		{ value: 'dom7sus4', label: '7sus4' },
+		{ value: 'dom9', label: '9' },
+		{ value: 'dom7b9', label: '7b9' },
+		{ value: 'dom7s9', label: '7#9' },
+		{ value: 'dom7s9s5', label: '7#9#5' },
+		{ value: 'dom7b9b5', label: '7b9b5' },
+		{ value: 'minMaj7', label: 'min(maj7)' }
 	] as const;
 
 	type TriadType = (typeof triads)[number]['value'];
