@@ -262,6 +262,9 @@ const floorSyllables: Record<number, string[]> = {
 	let harmonyDroneBlend = $state(40);
 	let harmonyQuizMode = $state(false);
 	let harmonyReveal = $state(false);
+	let harmonyContrastOn = $state(false);
+	let harmonyContrastTriad = $state<TriadType>('minor');
+	let harmonyContrastSeventh = $state<SeventhType>('min7');
 	let harmonyLoopOn = $state(true);
 	let harmonyLoopBars = $state('1');
 	let harmonyLoopActive = $state(false);
@@ -929,8 +932,17 @@ const floorSyllables: Record<number, string[]> = {
 	const harmonyDerivedQuality = $derived(
 		harmonyChordSet === 'triads' ? harmonyDerivedTriad : harmonyDerivedSeventh
 	);
+	const harmonyContrastQuality = $derived<ChordQuality>(
+		harmonyChordSet === 'triads' ? harmonyContrastTriad : harmonyContrastSeventh
+	);
+	const harmonyContrastQualityLabel = $derived.by(() => {
+		const set = harmonyChordSet === 'triads' ? harmonyTriads : harmonySevenths;
+		return set.find((c) => c.value === harmonyContrastQuality)?.label ?? String(harmonyContrastQuality);
+	});
 	const harmonyNowHearing = $derived(
-		`${harmonyFunction} in ${harmonyFunctionKeyLabel} → ${harmonyRootLabel} ${harmonyDerivedQuality}`
+		harmonyContrastOn
+			? `${harmonyFunction} in ${harmonyFunctionKeyLabel} → ${harmonyRootLabel} ${harmonyDerivedQuality} vs ${harmonyContrastQualityLabel}`
+			: `${harmonyFunction} in ${harmonyFunctionKeyLabel} → ${harmonyRootLabel} ${harmonyDerivedQuality}`
 	);
 	const harmonyChordQualityLabel = $derived.by(() => {
 		const set = harmonyChordSet === 'triads' ? harmonyTriads : harmonySevenths;
@@ -1205,16 +1217,26 @@ const floorSyllables: Record<number, string[]> = {
 		preloadHarmonySamples();
 		const inversion = Math.floor(Math.random() * 3) as 0 | 1 | 2;
 		harmonyInversion = inversion;
+		const primaryQuality =
+			harmonyChordMode === 'function'
+				? harmonyDerivedQuality
+				: harmonyChordSet === 'triads'
+					? harmonyTriad
+					: harmonySeventh;
 		harmonyEngine.playChord({
 			rootPc: harmonyRootPc,
-			quality:
-				harmonyChordMode === 'function'
-					? harmonyDerivedQuality
-					: harmonyChordSet === 'triads'
-						? harmonyTriad
-						: harmonySeventh,
+			quality: primaryQuality,
 			inversion
 		});
+		if (harmonyContrastOn) {
+			setTimeout(() => {
+				harmonyEngine.playChord({
+					rootPc: harmonyRootPc,
+					quality: harmonyContrastQuality,
+					inversion
+				});
+			}, 800);
+		}
 		if (harmonyQuizMode) harmonyReveal = false;
 		if (harmonyAdvanceKey) {
 			advanceHarmonyKey();
@@ -1354,6 +1376,9 @@ const floorSyllables: Record<number, string[]> = {
 						harmonyDroneVolume: number;
 						harmonyDroneBlend: number;
 						harmonyQuizMode: boolean;
+						harmonyContrastOn: boolean;
+						harmonyContrastTriad: TriadType;
+						harmonyContrastSeventh: SeventhType;
 						harmonyLoopOn: boolean;
 						harmonyLoopBars: string | number;
 						melodyMode: 'interactive' | 'passive';
@@ -1423,6 +1448,12 @@ const floorSyllables: Record<number, string[]> = {
 					harmonyDroneBlend = saved.harmonyDroneBlend;
 					if (typeof saved.harmonyQuizMode === 'boolean')
 						harmonyQuizMode = saved.harmonyQuizMode;
+					if (typeof saved.harmonyContrastOn === 'boolean')
+						harmonyContrastOn = saved.harmonyContrastOn;
+					if (saved.harmonyContrastTriad)
+						harmonyContrastTriad = saved.harmonyContrastTriad;
+					if (saved.harmonyContrastSeventh)
+						harmonyContrastSeventh = saved.harmonyContrastSeventh;
 					if (typeof saved.harmonyLoopOn === 'boolean') harmonyLoopOn = saved.harmonyLoopOn;
 					if (typeof saved.harmonyLoopBars === 'string') harmonyLoopBars = saved.harmonyLoopBars;
 					if (typeof saved.harmonyLoopBars === 'number')
@@ -1510,6 +1541,9 @@ const floorSyllables: Record<number, string[]> = {
 				harmonyDroneVolume,
 				harmonyDroneBlend,
 				harmonyQuizMode,
+				harmonyContrastOn,
+				harmonyContrastTriad,
+				harmonyContrastSeventh,
 				harmonyLoopOn,
 				harmonyLoopBars,
 					melodyMode,
@@ -2623,6 +2657,37 @@ const floorSyllables: Record<number, string[]> = {
 							</div>
 							<Switch bind:checked={harmonyQuizMode} />
 						</div>
+						<div class="flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<div>
+								<div class="text-sm font-semibold">Contrast</div>
+								<div class="text-xs text-muted-foreground">Play derived then comparison.</div>
+							</div>
+							<Switch bind:checked={harmonyContrastOn} />
+						</div>
+						{#if harmonyContrastOn}
+							<div class="space-y-2">
+								<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+									Compare with
+								</div>
+								{#if harmonyChordSet === 'triads'}
+									<ToggleGroup.Root type="single" bind:value={harmonyContrastTriad} class="flex flex-wrap gap-2">
+										{#each harmonyTriads as triad}
+											<ToggleGroup.Item value={triad.value} class="px-3 text-xs">
+												{triad.label}
+											</ToggleGroup.Item>
+										{/each}
+									</ToggleGroup.Root>
+								{:else}
+									<ToggleGroup.Root type="single" bind:value={harmonyContrastSeventh} class="flex flex-wrap gap-2">
+										{#each harmonySevenths as chord}
+											<ToggleGroup.Item value={chord.value} class="px-3 text-xs">
+												{chord.label}
+											</ToggleGroup.Item>
+										{/each}
+									</ToggleGroup.Root>
+								{/if}
+							</div>
+						{/if}
 					</div>
 				</details>
 			</aside>
