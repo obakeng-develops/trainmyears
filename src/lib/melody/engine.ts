@@ -352,6 +352,8 @@ export class MelodyEngine {
 		let lastBase = this.degreeBase(lastDegree);
 		let lastMidi: number | null = null;
 		for (let i = 0; i < phraseLength; i += 1) {
+			const pos = phraseLength > 2 ? i / (phraseLength - 1) : 0.5;
+			const bias = i === 0 ? 0 : shape(pos);
 			let degree: string;
 			if (i === 0) {
 				degree = lastDegree;
@@ -361,11 +363,9 @@ export class MelodyEngine {
 					? '1'
 					: this.pickNextDegree(allowedDegrees, lastBase, maxLeap, lastDegree, 0);
 			} else {
-				const pos = phraseLength > 2 ? i / (phraseLength - 1) : 0.5;
-				const bias = shape(pos);
 				degree = this.pickNextDegree(allowedDegrees, lastBase, maxLeap, lastDegree, bias);
 			}
-			const midi = this.degreeToMidi(degree, lastMidi ?? undefined);
+			const midi = this.degreeToMidi(degree, lastMidi ?? undefined, bias);
 			phrase.push({ degree, midi });
 			lastDegree = degree;
 			lastBase = this.degreeBase(degree);
@@ -569,7 +569,7 @@ export class MelodyEngine {
 		return next;
 	}
 
-	private degreeToMidi(degree: string, lastMidi?: number) {
+	private degreeToMidi(degree: string, lastMidi?: number, bias: number = 0) {
 		const baseMidi = 60 + (this.config.keyPc % 12);
 		const offset = DEGREE_OFFSETS[degree] ?? 0;
 		const base = baseMidi + offset;
@@ -582,6 +582,16 @@ export class MelodyEngine {
 		if (!candidates.length) return clamp(base, minMidi, maxMidi);
 		if (lastMidi === undefined) {
 			return candidates.includes(base) ? base : candidates[0];
+		}
+		if (bias !== 0 && candidates.length > 1) {
+			const directed = candidates.filter((midi) =>
+				bias > 0 ? midi > lastMidi : midi < lastMidi
+			);
+			if (directed.length) {
+				return directed.reduce((closest, midi) =>
+					Math.abs(midi - lastMidi) < Math.abs(closest - lastMidi) ? midi : closest
+				);
+			}
 		}
 		return candidates.reduce((closest, midi) =>
 			Math.abs(midi - lastMidi) < Math.abs(closest - lastMidi) ? midi : closest
