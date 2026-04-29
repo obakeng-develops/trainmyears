@@ -8,6 +8,7 @@
 	import { Slider } from '$lib/components/ui/slider/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { MelodyEngine } from '$lib/melody/engine';
+	import { MelodyTrainerEngine } from '$lib/melody/trainer';
 
 	let { bpm = $bindable(92) } = $props();
 
@@ -102,12 +103,21 @@
 	let droneOn = $state(true);
 
 	// Call-and-response mode state
-	let trainingFormat = $state<'passive' | 'call-response'>('passive');
+	let trainingFormat = $state<'passive' | 'call-response' | 'dictation'>('passive');
 	let onTheGo = $state(false);
 	let crPhraseNotes = $state('4'); // '2', '3', or '4'
 	let dictateMode = $state(false);
 	let dictationInput = $state<string[]>([]);
 	let dictationFeedback = $state<'idle' | 'correct' | 'incorrect'>('idle');
+
+	// Dictation trainer state
+	const melodyTrainer = new MelodyTrainerEngine();
+	let dictationStage = $state<'idle' | 'listening' | 'input' | 'feedback'>('idle');
+	let dictationTier = $state(melodyTrainer.getCurrentTier());
+	let dictationPhraseLength = $state(melodyTrainer.getTierConfig().phraseLengthMin);
+	let showTierChangeNotification = $state(false);
+	let tierChangeMessage = $state('');
+	let dictationPhraseNotes = $state<string[]>([]);
 
 	// Shared playback state
 	let isPlaying = $state(false);
@@ -126,6 +136,10 @@
 	let phraseGuide = $state<string[]>([]);
 
 	const settingsKey = 'melody-listening-settings';
+
+	// 12-degree grid layout
+	const DIATONIC_DEGREES = ['1', '2', '3', '4', '5', '6', '7'];
+	const CHROMATIC_DEGREES = ['b2', 'b3', '#4', 'b6', 'b7'];
 
 	// --- Passive mode helpers ---
 
@@ -174,6 +188,95 @@
 	const resetDictation = () => {
 		dictationInput = [];
 		dictationFeedback = 'idle';
+	};
+
+	// --- Dictation Trainer helpers ---
+
+	const generateDictationPhrase = () => {
+		const config = melodyTrainer.getTierConfig(dictationTier);
+		const length = melodyTrainer.getPhraseLength();
+		dictationPhraseLength = length;
+		
+		engine.setConfig({
+			bpm,
+			keyPc: Number(tonic),
+			mode: 'major',
+			phraseLength: length,
+			loopBars: length,
+			loop: false,
+			countInBars: 0,
+			regenerateOnLoop: false,
+			allowedDegrees: config.allowedDegrees,
+			maxLeap: config.maxLeap,
+			startOnTonic: config.startOnTonic,
+			contour: 'random',
+			resolutionProbability: config.resolutionProbability
+		});
+		
+		engine.generatePhrase();
+		const phrase = engine.getPhrase();
+		dictationPhraseNotes = phrase.map((n) => n.degree);
+	};
+
+	const playDictationPhrase = async () => {
+		await engine.unlock();
+		preloadSamples();
+		generateDictationPhrase();
+		dictationStage = 'listening';
+		engine.playPhraseOnce();
+		
+		// Calculate when phrase ends and auto-advance to input stage
+		const phraseDuration = (dictationPhraseLength * 60) / bpm;
+		setTimeout(() => {
+			if (dictationStage === 'listening') {
+				dictationStage = 'input';
+			}
+		}, phraseDuration * 1000 + 200);
+	};
+
+	const submitDictationTrainer = () => {
+		if (dictationInput.length !== dictationPhraseLength) return;
+		
+		const correct = dictationInput.every((d, i) => d === dictationPhraseNotes[i]);
+		dictationFeedback = correct ? 'correct' : 'incorrect';
+		dictationStage = 'feedback';
+		
+		melodyTrainer.recordAttempt(correct);
+		
+		const tierChange = melodyTrainer.checkTierChange();
+		if (tierChange.changed) {
+			dictationTier = tierChange.newTier;
+			showTierChangeNotification = true;
+			tierChangeMessage = tierChange.direction === 'up' 
+				? `Advanced to Tier ${tierChange.newTier}: ${melodyTrainer.getTierName(tierChange.newTier)}!`
+				: `Demoted to Tier ${tierChange.newTier}: ${melodyTrainer.getTierName(tierChange.newTier)}`;
+			
+			setTimeout(() => {
+				showTierChangeNotification = false;
+			}, 4000);
+		}
+	};
+
+	const nextDictationPhrase = () => {
+		dictationInput = [];
+		dictationFeedback = 'idle';
+		dictationStage = 'idle';
+		setTimeout(() => {
+			playDictationPhrase();
+		}, 300);
+	};
+
+	const resetDictationTrainer = () => {
+		dictationInput = [];
+		dictationFeedback = 'idle';
+		dictationStage = 'idle';
+	};
+
+	const selectTier = (tier: number) => {
+		if (!melodyTrainer.isTierUnlocked(tier as 1 | 2 | 3 | 4 | 5)) return;
+		dictationTier = tier as 1 | 2 | 3 | 4 | 5;
+		melodyTrainer.setTier(tier as 1 | 2 | 3 | 4 | 5);
+		resetDictationTrainer();
 	};
 
 	// --- Engine ---
@@ -327,6 +430,10 @@
 	// --- Engine sync ---
 
 	const syncEngine = () => {
+		if (trainingFormat === 'dictation') {
+			// Dictation mode doesn't use the scheduler loop
+			return;
+		}
 		if (trainingFormat === 'call-response') {
 			const loopBars = Math.ceil(crNotesCount / 2);
 			engine.setConfig({
@@ -463,12 +570,12 @@
 				phraseBars: number;
 				tonic: string;
 				droneOn: boolean;
-				trainingFormat: 'passive' | 'call-response';
+				trainingFormat: 'passive' | 'call-response' | 'dictation';
 				onTheGo: boolean;
 				crPhraseNotes: string;
 				dictateMode: boolean;
-			}>;
-			if (saved.mode) mode = saved.mode;
+				dictationTier: number;
+				}>;
 			if (saved.scaleSingle) scaleSingle = saved.scaleSingle;
 			if (saved.diminishedMode) diminishedMode = saved.diminishedMode;
 			if (saved.quickstartFocus) quickstartFocus = saved.quickstartFocus;
@@ -480,6 +587,7 @@
 			if (typeof saved.onTheGo === 'boolean') onTheGo = saved.onTheGo;
 			if (saved.crPhraseNotes) crPhraseNotes = saved.crPhraseNotes;
 			if (typeof saved.dictateMode === 'boolean') dictateMode = saved.dictateMode;
+			if (typeof saved.dictationTier === 'number') dictationTier = saved.dictationTier as 1 | 2 | 3 | 4 | 5;
 		} catch {
 			// ignore
 		}
@@ -502,12 +610,20 @@
 						? onTheGo
 							? 'Hear a phrase, then sing or audiate it.'
 							: 'Hear a phrase, then play it back on your instrument.'
-						: 'Listen to scales or patterns against a drone.'}
+						: trainingFormat === 'dictation'
+							? 'Hear a phrase, then dictate the notes.'
+														: 'Listen to scales or patterns against a drone.'}
 				</Card.Description>
 			</div>
 			<div class="flex items-center gap-3">
 				<Badge variant="secondary" class="text-xs">Drone {keyLabel}</Badge>
-				<Button onclick={togglePlayback} class="px-5">{isPlaying ? 'Stop' : 'Play'}</Button>
+				{#if trainingFormat === 'dictation'}
+					<Button onclick={playDictationPhrase} class="px-5">
+						{dictationStage === 'listening' ? 'Playing...' : 'Play Phrase'}
+					</Button>
+				{:else}
+					<Button onclick={togglePlayback} class="px-5">{isPlaying ? 'Stop' : 'Play'}</Button>
+				{/if}
 			</div>
 		</Card.Header>
 		<Card.Content class="space-y-6">
@@ -543,6 +659,21 @@
 					}}
 				>
 					Call & Response
+				</button>
+				<button
+					class={`flex-1 rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
+						trainingFormat === 'dictation'
+							? 'bg-background text-foreground shadow-sm'
+							: 'text-muted-foreground hover:text-foreground'
+					}`}
+					onclick={() => {
+						if (trainingFormat !== 'dictation') {
+							trainingFormat = 'dictation';
+							if (isPlaying) { engine.stop(); isPlaying = false; stage = 'idle'; }
+						}
+					}}
+				>
+					Dictation Trainer
 				</button>
 			</div>
 
@@ -930,12 +1061,13 @@
 						<span class="text-xs text-muted-foreground">{bpm} bpm</span>
 					</div>
 					<Slider
+						type="single"
 						class="mt-3"
 						min={50}
 						max={160}
 						step={2}
-						value={[bpm]}
-						onValueChange={([v]: number[]) => (bpm = v)}
+						value={bpm}
+						onValueChange={(v) => (bpm = v)}
 					/>
 					<div class="mt-2 text-xs text-muted-foreground">
 						Lower tempo = more time to respond. Increase to build speed.
@@ -961,6 +1093,206 @@
 						<div class="text-xs text-muted-foreground">Tap degrees to check your ear</div>
 					</div>
 					<Switch bind:checked={dictateMode} />
+				</div>
+			{/if}
+
+			<!-- Dictation Trainer content -->
+			{#if trainingFormat === 'dictation'}
+				<!-- Tier change notification -->
+				{#if showTierChangeNotification}
+					<div
+						class="rounded-2xl border border-primary/30 bg-primary/5 p-4 text-center"
+					>
+						<div class="text-sm font-semibold text-primary">{tierChangeMessage}</div>
+					</div>
+				{/if}
+
+				<!-- Phase indicator -->
+				<div
+					class={`rounded-2xl border p-6 text-center transition-colors ${
+						dictationStage === 'listening'
+							? 'border-primary/30 bg-primary/5'
+							: dictationStage === 'input'
+								? 'border-amber-500/30 bg-amber-500/5'
+								: dictationStage === 'feedback'
+									? dictationFeedback === 'correct'
+										? 'border-emerald-500/30 bg-emerald-500/5'
+										: 'border-rose-500/30 bg-rose-500/5'
+									: 'border-border/70 bg-[var(--surface-1)]'
+					}`}
+				>
+					{#if dictationStage === 'idle'}
+						<div class="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+							Ready
+						</div>
+						<div class="mt-1 text-2xl font-semibold text-muted-foreground">—</div>
+						<div class="mt-1 text-xs text-muted-foreground">Press play to hear a phrase.</div>
+					{:else if dictationStage === 'listening'}
+						<div class="text-xs font-semibold uppercase tracking-[0.3em] text-primary/70">
+							Listen
+						</div>
+						<div class="mt-1 text-2xl font-semibold text-foreground">Hear it</div>
+						<div class="mt-1 text-xs text-muted-foreground">Hold the phrase in your mind.</div>
+					{:else if dictationStage === 'input'}
+						<div class="text-xs font-semibold uppercase tracking-[0.3em] text-amber-600/80">
+							Sing it back
+						</div>
+						<div class="mt-1 text-2xl font-semibold text-foreground">Dictate</div>
+						<div class="mt-1 text-xs text-muted-foreground">Tap the degrees you heard.</div>
+					{:else if dictationStage === 'feedback'}
+						<div class={`text-xs font-semibold uppercase tracking-[0.3em] ${dictationFeedback === 'correct' ? 'text-emerald-600/80' : 'text-rose-600/80'}`}>
+							{dictationFeedback === 'correct' ? 'Correct!' : 'Incorrect'}
+						</div>
+						<div class="mt-1 text-2xl font-semibold text-foreground">
+							{dictationFeedback === 'correct' ? 'Well done' : 'Try again'}
+						</div>
+						{#if dictationFeedback === 'incorrect'}
+							<div class="mt-1 text-xs text-muted-foreground">
+								Answer: {dictationPhraseNotes.join(' · ')}
+							</div>
+						{/if}
+					{/if}
+				</div>
+
+				<!-- Dictation input -->
+				{#if dictationStage === 'input' || dictationStage === 'feedback'}
+					<div class="space-y-3">
+						<!-- Input display -->
+						<div class="flex min-h-[2.25rem] flex-wrap items-center gap-1 rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							{#each dictationInput as degree, i}
+								<span
+									class={`rounded px-2 py-0.5 text-xs font-semibold ${
+										dictationFeedback === 'idle'
+											? 'bg-primary/10 text-foreground'
+											: degree === dictationPhraseNotes[i]
+												? 'bg-emerald-500/15 text-emerald-300'
+												: 'bg-rose-500/15 text-rose-300'
+									}`}
+								>
+									{degree}
+								</span>
+							{/each}
+							{#if dictationInput.length < dictationPhraseLength && dictationFeedback === 'idle'}
+								<span class="text-xs text-muted-foreground/40">
+									{dictationPhraseLength - dictationInput.length} left
+								</span>
+							{/if}
+						</div>
+
+						<!-- 12-degree grid -->
+						<div class="space-y-2">
+							<div class="flex flex-wrap gap-1.5">
+								{#each DIATONIC_DEGREES as degree}
+									<button
+										class="rounded-full bg-[var(--surface-2)] px-3 py-1 text-xs font-semibold text-foreground transition-colors hover:bg-primary/10 disabled:opacity-40"
+										disabled={dictationFeedback !== 'idle' || dictationInput.length >= dictationPhraseLength}
+										onclick={() => pushDictation(degree)}
+									>
+										{degree}
+									</button>
+								{/each}
+							</div>
+							<div class="flex flex-wrap gap-1.5">
+								{#each CHROMATIC_DEGREES as degree}
+									<button
+										class="rounded-full bg-[var(--surface-2)] px-3 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-primary/10 disabled:opacity-40"
+										disabled={dictationFeedback !== 'idle' || dictationInput.length >= dictationPhraseLength}
+										onclick={() => pushDictation(degree)}
+									>
+										{degree}
+									</button>
+								{/each}
+							</div>
+						</div>
+
+						<!-- Actions -->
+						<div class="flex flex-wrap items-center gap-2">
+							{#if dictationInput.length > 0 && dictationFeedback === 'idle'}
+								<Button size="sm" variant="ghost" onclick={popDictation}>
+									Undo
+								</Button>
+							{/if}
+							{#if dictationInput.length === dictationPhraseLength && dictationFeedback === 'idle'}
+								<Button size="sm" onclick={submitDictationTrainer}>
+									Check
+								</Button>
+							{/if}
+						{#if dictationStage === 'feedback'}
+							<Button size="sm" onclick={nextDictationPhrase}>
+								Next phrase
+							</Button>
+						{/if}
+						<Button size="sm" variant="secondary" onclick={() => { generateDictationPhrase(); engine.playPhraseOnce(); }}>
+							Replay
+						</Button>
+						</div>
+					</div>
+				{/if}
+
+				<!-- Tier selection -->
+				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Tier
+					</div>
+					<div class="mt-2 flex flex-wrap gap-2">
+					{#each [1, 2, 3, 4, 5] as tier}
+						{@const tierNum = tier as 1 | 2 | 3 | 4 | 5}
+						<button
+							class={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+								dictationTier === tierNum
+									? 'bg-primary text-primary-foreground'
+									: melodyTrainer.isTierUnlocked(tierNum)
+										? 'bg-[var(--surface-2)] text-foreground hover:bg-primary/10'
+										: 'bg-muted text-muted-foreground cursor-not-allowed opacity-50'
+							}`}
+							disabled={!melodyTrainer.isTierUnlocked(tierNum)}
+							onclick={() => selectTier(tierNum)}
+						>
+							{tierNum}: {melodyTrainer.getTierName(tierNum)}
+						</button>
+					{/each}
+					</div>
+					<div class="mt-2 text-xs text-muted-foreground">
+						{melodyTrainer.getTierDescription(dictationTier)}
+					</div>
+				</div>
+
+				<!-- Stats panel -->
+				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Session Stats
+					</div>
+					<div class="mt-2 grid grid-cols-3 gap-4">
+						<div>
+							<div class="text-2xl font-semibold">{melodyTrainer.getAccuracy()}%</div>
+							<div class="text-xs text-muted-foreground">Accuracy</div>
+						</div>
+						<div>
+							<div class="text-2xl font-semibold">{melodyTrainer.getStreak()}</div>
+							<div class="text-xs text-muted-foreground">Streak</div>
+						</div>
+						<div>
+							<div class="text-2xl font-semibold">{melodyTrainer.getSessionStats().totalAttempts}</div>
+							<div class="text-xs text-muted-foreground">Attempts</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Tonic selection -->
+				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
+					<div class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+						Tonic
+					</div>
+					<Select.Root type="single" bind:value={tonic as never}>
+						<Select.Trigger class="w-full">
+							<span>{keyLabel}</span>
+						</Select.Trigger>
+						<Select.Content>
+							{#each keyOptions as keyOption}
+								<Select.Item value={String(keyOption.pc)}>{keyOption.label}</Select.Item>
+							{/each}
+						</Select.Content>
+					</Select.Root>
 				</div>
 			{/if}
 

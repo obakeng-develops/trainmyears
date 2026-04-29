@@ -59,6 +59,7 @@ export type MelodyEngineConfig = {
 	allowedDegrees: string[];
 	startOnTonic: boolean;
 	contour: MelodyContour;
+	resolutionProbability?: number;
 };
 
 export type MelodyPhraseNote = {
@@ -358,8 +359,9 @@ export class MelodyEngine {
 			if (i === 0) {
 				degree = lastDegree;
 			} else if (i === phraseLength - 1 && allowedDegrees.includes('1')) {
-				// Resolve to tonic on last note with high probability
-				degree = Math.random() < 0.7
+				// Resolve to tonic on last note based on config probability
+				const resolutionProb = this.config.resolutionProbability ?? 0.7;
+				degree = Math.random() < resolutionProb
 					? '1'
 					: this.pickNextDegree(allowedDegrees, lastBase, maxLeap, lastDegree, 0);
 			} else {

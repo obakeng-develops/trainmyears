@@ -39,12 +39,15 @@
 				A guided ear-training app for rhythm, melody, harmony, and progressions. Build the loop of
 				hear → feel → produce with minimal friction.
 			</p>
-			<div class="flex flex-wrap gap-3">
-				<Button class="px-6" onclick={() => goto('#start')}>Start session</Button>
-				<Button variant="secondary" class="px-6" onclick={() => goto('/rhythm/advanced')}>
-					Advanced
-				</Button>
-			</div>
+				<div class="flex flex-wrap gap-3">
+					<Button class="px-6" onclick={() => goto('#start')}>Start session</Button>
+					<Button variant="secondary" class="px-6" onclick={() => goto('/rhythm/advanced')}>
+						Advanced
+					</Button>
+					<Button variant="outline" class="px-6" onclick={() => goto('/rhythm/challenge')}>
+						Challenge
+					</Button>
+				</div>
 		</header>
 
 		<div class="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">

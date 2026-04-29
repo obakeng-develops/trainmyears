@@ -1693,7 +1693,7 @@ const floorSyllables: Record<number, string[]> = {
 							<div class="space-y-2">
 								<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 									<span>{bpmLabel}</span>
-									<span class="text-foreground">{Math.round(playbackBpm)}</span>
+								<span class="text-foreground">{Math.round(floorsMode && !matchPlaybackBpm ? bpmValue : playbackBpm)}</span>
 							</div>
 							<Slider type="single" min={40} max={180} step={1} bind:value={bpmValue} />
 							<div class="mt-2 text-xs text-muted-foreground">
@@ -1928,7 +1928,7 @@ const floorSyllables: Record<number, string[]> = {
 							<div class="space-y-2">
 								<div class="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
 									<span>{bpmLabel}</span>
-								<span class="text-foreground">{Math.round(playbackBpm)}</span>
+								<span class="text-foreground">{Math.round(floorsMode && !matchPlaybackBpm ? bpmValue : playbackBpm)}</span>
 							</div>
 							<Slider type="single" min={40} max={180} step={1} bind:value={bpmValue} />
 							<div class="mt-2 text-xs text-muted-foreground">

@@ -7,6 +7,7 @@
 		type RhythmTick
 	} from '$lib/rhythm/engine';
 	import type { DropoutConfig } from '$lib/rhythm/engine';
+	import { TrainerEngine, TIER_NAMES, type DifficultyTier } from '$lib/rhythm/trainer';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Slider } from '$lib/components/ui/slider/index.js';
@@ -48,6 +49,14 @@
 	let dropoutBarsRemaining = $state(0);
 	let swing = $state(0);
 
+	// Trainer state
+	let trainerEngine = $state<TrainerEngine | null>(null);
+	let currentTier = $state<DifficultyTier>(1);
+	let showStats = $state(false);
+	let tierChangeMessage = $state<string | null>(null);
+	let tapStartTime = $state(0);
+	let attemptCounter = $state(0); // Used to trigger reactive updates
+
 	const swingLabel = $derived(
 		swing === 0 ? 'Straight' : swing <= 20 ? 'Light' : swing <= 50 ? 'Triplet' : 'Hard shuffle'
 	);
@@ -58,6 +67,22 @@
 	const steps = $derived(Array.from({ length: totalSteps }, (_, index) => index));
 	const beatNumbers = [1, 2, 3, 4];
 	const progressPercent = $derived(totalSteps ? (currentStep / totalSteps) * 100 : 0);
+
+	// Trainer stats - reactive based on attemptCounter
+	const sessionStats = $derived.by(() => {
+		attemptCounter; // dependency to trigger reactivity
+		return trainerEngine?.getSessionStats() ?? null;
+	});
+	const accuracy = $derived.by(() => {
+		attemptCounter; // dependency to trigger reactivity
+		return trainerEngine?.getAccuracy() ?? 0;
+	});
+	const avgResponseTime = $derived.by(() => {
+		attemptCounter; // dependency to trigger reactivity
+		return trainerEngine?.getAverageResponseTime() ?? 0;
+	});
+	const streak = $derived(sessionStats?.streak ?? 0);
+	const tierName = $derived(trainerEngine?.getTierName() ?? 'Beat Anchors');
 
 	const engine = new RhythmEngine({
 		onTick: (tick: RhythmTick) => {
@@ -107,8 +132,8 @@
 		applyConfig();
 		engine.start();
 		isPlaying = true;
-		if (trainerOn && trainerTarget === null) {
-			trainerTarget = Math.floor(Math.random() * totalSteps);
+		if (trainerOn && trainerTarget === null && trainerEngine) {
+			pickTrainerTarget();
 		}
 	};
 
@@ -132,25 +157,48 @@
 	const isBeatStart = (step: number) => step % subdivisionCount === 0;
 
 	const pickTrainerTarget = () => {
-		trainerTarget = Math.floor(Math.random() * totalSteps);
+		if (!trainerEngine) return;
+		trainerTarget = trainerEngine.getNextTarget(totalSteps, subdivisionCount);
 		trainerFeedback = 'idle';
+		tapStartTime = Date.now();
 	};
 
 	const tapCell = (step: number) => {
-		if (!trainerOn) return;
-		if (trainerTarget === null) {
-			trainerTarget = step;
-			trainerFeedback = 'idle';
-			return;
+		if (!trainerOn || !trainerEngine) return;
+
+		const responseTime = Date.now() - tapStartTime;
+		const isCorrect = step === trainerTarget;
+
+		// Record the attempt
+		trainerEngine.recordAttempt(isCorrect, responseTime, subdivisionCount, trainerTarget ?? 0);
+
+		// Check for tier changes
+		const tierChange = trainerEngine.checkTierChange();
+		if (tierChange.changed) {
+			currentTier = tierChange.newTier;
+			tierChangeMessage =
+				tierChange.direction === 'up'
+					? `🎉 Advanced to ${TIER_NAMES[tierChange.newTier]}!`
+					: `📉 Dropped to ${TIER_NAMES[tierChange.newTier]}. Keep practicing!`;
+
+			// Clear message after 3 seconds
+			setTimeout(() => {
+				tierChangeMessage = null;
+			}, 3000);
 		}
-		trainerFeedback = step === trainerTarget ? 'correct' : 'incorrect';
+
+		trainerFeedback = isCorrect ? 'correct' : 'incorrect';
+		attemptCounter++; // Trigger reactive update of stats
+
 		if (trainerTimer) clearTimeout(trainerTimer);
 		trainerTimer = setTimeout(() => {
 			pickTrainerTarget();
 		}, 450);
 	};
 
-	const configKey = $derived(`${bpmValue}-${countIn}-${subdivision}-${contextPulse}-${dropoutEnabled}-${dropoutBarsOn}-${dropoutBarsSilent}-${dropoutDropPulse}-${dropoutDropSubdivision}-${swing}`);
+	const configKey = $derived(
+		`${bpmValue}-${countIn}-${subdivision}-${contextPulse}-${dropoutEnabled}-${dropoutBarsOn}-${dropoutBarsSilent}-${dropoutDropPulse}-${dropoutDropSubdivision}-${swing}`
+	);
 	$effect(() => {
 		if (isPlaying && configKey !== lastConfigKey) {
 			stopPlayback();
@@ -169,7 +217,7 @@
 			}
 			return;
 		}
-		if (trainerTarget === null || trainerTarget >= totalSteps) {
+		if ((trainerTarget === null || trainerTarget >= totalSteps) && trainerEngine) {
 			pickTrainerTarget();
 		}
 	});
@@ -177,6 +225,10 @@
 	onMount(() => {
 		if (typeof window !== 'undefined') {
 			window.localStorage.setItem('tm:lastMode', 'rhythm');
+
+			// Initialize trainer engine
+			trainerEngine = new TrainerEngine();
+			currentTier = trainerEngine.getCurrentTier();
 		}
 	});
 
@@ -198,6 +250,21 @@
 		100% {
 			opacity: 0;
 		}
+	}
+
+	@keyframes fade-in {
+		from {
+			opacity: 0;
+			transform: translateY(-10px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	.animate-fade-in {
+		animation: fade-in 0.3s ease-out;
 	}
 </style>
 
@@ -224,7 +291,13 @@
 					</Card.Description>
 				</div>
 				<div class="flex items-center gap-3">
-					<Badge variant="secondary" class="text-xs">{subdivision} per beat</Badge>
+					{#if trainerOn}
+						<Badge variant="secondary" class="text-xs">
+							Tier {currentTier}/5 · {streak} streak
+						</Badge>
+					{:else}
+						<Badge variant="secondary" class="text-xs">{subdivision} per beat</Badge>
+					{/if}
 					<div class="relative">
 						{#if isPlaying}
 							<span
@@ -239,15 +312,14 @@
 				</div>
 			</Card.Header>
 			<Card.Content class="space-y-6">
-				<div class="grid grid-cols-4 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+				<div
+					class="grid grid-cols-4 gap-2 text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+				>
 					{#each beatNumbers as beat}
 						<div class="rounded-lg border border-border/60 bg-background/50 px-2 py-2">{beat}</div>
 					{/each}
 				</div>
-				<div
-					class="grid gap-1"
-					style={`grid-template-columns: repeat(${totalSteps}, minmax(0, 1fr));`}
-				>
+				<div class="grid gap-1" style={`grid-template-columns: repeat(${totalSteps}, minmax(0, 1fr));`}>
 					{#each steps as step}
 						<button
 							type="button"
@@ -260,9 +332,7 @@
 									? 'text-foreground shadow-[0_0_12px_rgba(186,120,52,0.35)]'
 									: 'text-muted-foreground'
 							} ${
-								trainerOn && trainerTarget === step
-									? 'ring-2 ring-primary/60'
-									: ''
+								trainerOn && trainerTarget === step ? 'ring-2 ring-primary/60' : ''
 							}`}
 							onclick={() => tapCell(step)}
 						>
@@ -272,17 +342,37 @@
 					{/each}
 				</div>
 				<div class="h-2 w-full rounded-full bg-border/60">
-					<div class="h-full rounded-full bg-primary/70 transition-all" style={`width: ${progressPercent}%;`}></div>
+					<div
+						class="h-full rounded-full bg-primary/70 transition-all"
+						style={`width: ${progressPercent}%;`}
+					></div>
 				</div>
+
+				{#if tierChangeMessage}
+					<div
+						class="animate-fade-in rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-center text-sm"
+					>
+						{tierChangeMessage}
+					</div>
+				{/if}
+
 				{#if dropoutEnabled && stage === 'playing'}
-					<div class={`rounded-lg border px-3 py-2 text-xs ${dropoutPhase === 'silent' ? 'border-rose-400/30 bg-rose-500/10 text-rose-300' : 'border-border/60 text-muted-foreground'}`}>
+					<div
+						class={`rounded-lg border px-3 py-2 text-xs ${
+							dropoutPhase === 'silent'
+								? 'border-rose-400/30 bg-rose-500/10 text-rose-300'
+								: 'border-border/60 text-muted-foreground'
+						}`}
+					>
 						{dropoutPhase === 'silent'
 							? `Silent — hold it. ${dropoutBarsRemaining} bar${dropoutBarsRemaining === 1 ? '' : 's'} to return`
 							: `Playing — ${dropoutBarsRemaining} bar${dropoutBarsRemaining === 1 ? '' : 's'} until dropout`}
 					</div>
 				{/if}
 				<div class="rounded-2xl border border-border/70 bg-[var(--surface-1)] p-6">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">What to listen for</div>
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						What to listen for
+					</div>
 					<div class="mt-2 text-sm">
 						Hear the pulse, then place the syllable in the grid. Tap the cell you hear.
 					</div>
@@ -303,6 +393,76 @@
 			</Card.Content>
 		</Card.Root>
 
+		<!-- Session Progress Card -->
+		{#if trainerOn && sessionStats}
+			<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
+				<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
+					<span>Session Progress</span>
+					<span class="text-xs text-muted-foreground">
+						{sessionStats.correctCount}/{sessionStats.totalAttempts} correct
+					</span>
+				</summary>
+				<div class="mt-4 space-y-4">
+					<!-- Current tier indicator -->
+					<div>
+						<div class="mb-1 flex justify-between text-xs">
+							<span class="text-muted-foreground">Current Level</span>
+							<span class="font-semibold">{tierName}</span>
+						</div>
+						<div class="h-2 w-full rounded-full bg-border/60">
+							<div
+								class="h-full rounded-full bg-primary/70 transition-all"
+								style={`width: ${(currentTier / 5) * 100}%`}
+							></div>
+						</div>
+						<p class="mt-1 text-xs text-muted-foreground">
+							{trainerEngine?.getTierDescription() ?? ''}
+						</p>
+					</div>
+
+					<!-- Stats grid -->
+					<div class="grid grid-cols-3 gap-2 text-center">
+						<div class="rounded-lg bg-[var(--surface-2)] p-2">
+							<div class="text-lg font-semibold">{accuracy}%</div>
+							<div class="text-[10px] uppercase text-muted-foreground">Accuracy</div>
+						</div>
+						<div class="rounded-lg bg-[var(--surface-2)] p-2">
+							<div class="text-lg font-semibold">{streak}</div>
+							<div class="text-[10px] uppercase text-muted-foreground">Streak</div>
+						</div>
+						<div class="rounded-lg bg-[var(--surface-2)] p-2">
+							<div class="text-lg font-semibold">{avgResponseTime}ms</div>
+							<div class="text-[10px] uppercase text-muted-foreground">Avg Time</div>
+						</div>
+					</div>
+
+					<!-- Subdivision breakdown -->
+					{#if Object.keys(sessionStats.subdivisionBreakdown).length > 0}
+						<div class="text-xs text-muted-foreground">
+							<div class="mb-1 font-semibold">By subdivision:</div>
+							{#each Object.entries(sessionStats.subdivisionBreakdown) as [sub, stats]}
+								<div class="flex justify-between">
+									<span>{sub} per beat</span>
+									<span>
+										{stats.correct}/{stats.total}
+										({stats.total > 0 ? Math.round((stats.correct / stats.total) * 100) : 0}%)
+									</span>
+								</div>
+							{/each}
+						</div>
+					{/if}
+
+					<!-- Max streak -->
+					{#if sessionStats.maxStreak > 0}
+						<div class="text-xs text-muted-foreground">
+							<span class="font-semibold">Best streak:</span>
+							{sessionStats.maxStreak} correct in a row
+						</div>
+					{/if}
+				</div>
+			</details>
+		{/if}
+
 		<details class="rounded-xl border border-border/60 bg-card/80 p-4 shadow-none backdrop-blur lg:shadow-lg">
 			<summary class="flex cursor-pointer items-center justify-between text-sm font-semibold">
 				Settings
@@ -310,7 +470,9 @@
 			</summary>
 			<div class="mt-4 grid gap-4 md:grid-cols-3">
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Subdivision</div>
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						Subdivision
+					</div>
 					<ToggleGroup.Root type="single" bind:value={subdivision} class="mt-2 flex flex-wrap gap-2">
 						{#each subdivisionOptions as value}
 							<ToggleGroup.Item value={value} class="px-3 text-xs">
@@ -321,30 +483,42 @@
 					<div class="mt-2 text-xs text-muted-foreground">Default: 4 (Ta Ka Di Mi)</div>
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Context</div>
-					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						Context
+					</div>
+					<div
+						class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+					>
 						<span class="text-xs text-muted-foreground">Pulse</span>
 						<Switch bind:checked={contextPulse} />
 					</div>
-					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+					<div
+						class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+					>
 						<span class="text-xs text-muted-foreground">Trainer</span>
 						<Switch bind:checked={trainerOn} />
 					</div>
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tempo</div>
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						Tempo
+					</div>
 					<div class="mt-2 flex items-center justify-between text-xs text-muted-foreground">
 						<span>BPM</span>
 						<span class="text-foreground">{bpmValue}</span>
 					</div>
 					<Slider type="single" min={60} max={140} step={1} bind:value={bpmValue} />
-					<div class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+					<div
+						class="mt-2 flex items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+					>
 						<span class="text-xs text-muted-foreground">Count-in</span>
 						<Switch bind:checked={countIn} />
 					</div>
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3">
-					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Feel</div>
+					<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						Feel
+					</div>
 					<div class="mt-2 flex items-center justify-between text-xs text-muted-foreground">
 						<span>Swing</span>
 						<span class="text-foreground">{swingLabel}{swing > 0 ? ` (${swing}%)` : ''}</span>
@@ -358,20 +532,26 @@
 				</div>
 				<div class="rounded-xl border border-border/60 bg-[var(--surface-2)] px-4 py-3 md:col-span-3">
 					<div class="flex items-center justify-between">
-						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Dropout</div>
+						<div class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+							Dropout
+						</div>
 						<Switch bind:checked={dropoutEnabled} />
 					</div>
 					{#if dropoutEnabled}
 						<div class="mt-3 grid gap-3 sm:grid-cols-2">
 							<div>
-								<div class="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+								<div
+									class="mb-1 flex items-center justify-between text-xs text-muted-foreground"
+								>
 									<span>Bars on</span>
 									<span class="text-foreground">{dropoutBarsOn}</span>
 								</div>
 								<Slider type="single" min={1} max={16} step={1} bind:value={dropoutBarsOn} />
 							</div>
 							<div>
-								<div class="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+								<div
+									class="mb-1 flex items-center justify-between text-xs text-muted-foreground"
+								>
 									<span>Bars silent</span>
 									<span class="text-foreground">{dropoutBarsSilent}</span>
 								</div>
@@ -379,11 +559,15 @@
 							</div>
 						</div>
 						<div class="mt-3 flex flex-wrap gap-2">
-							<div class="flex flex-1 items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<div
+								class="flex flex-1 items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+							>
 								<span class="text-xs text-muted-foreground">Drop pulse</span>
 								<Switch bind:checked={dropoutDropPulse} />
 							</div>
-							<div class="flex flex-1 items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+							<div
+								class="flex flex-1 items-center justify-between rounded-lg border border-border/70 bg-background/60 px-3 py-2"
+							>
 								<span class="text-xs text-muted-foreground">Drop subdivisions</span>
 								<Switch bind:checked={dropoutDropSubdivision} />
 							</div>
@@ -397,8 +581,13 @@
 			iOS: Silent Mode mutes web audio. Flip the ring switch if you hear nothing.
 		</div>
 
-		<div class="text-sm text-muted-foreground">
-			Need full control? <a class="underline" href="/rhythm/advanced">Open Rhythm Advanced</a>.
+		<div class="flex flex-col gap-2 text-sm text-muted-foreground">
+			<div>
+				Need full control? <a class="underline" href="/rhythm/advanced">Open Rhythm Advanced</a>.
+			</div>
+			<div>
+				Want a challenge? <a class="underline" href="/rhythm/challenge">Try Challenge Mode</a>.
+			</div>
 		</div>
 	</div>
 </div>
